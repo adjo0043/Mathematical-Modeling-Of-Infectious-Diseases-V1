@@ -7,15 +7,15 @@
 # --- Core MCMC Settings ---
 # A long burn-in period is essential for the sampler to find the high-probability
 # region of the posterior and for the adaptive step-size to stabilize.
-burn_in 50000
+burn_in 50
 
 # A large number of post-burn-in iterations are needed to generate a sufficient
 # number of samples for accurate posterior analysis.
-mcmc_iterations 200000
+mcmc_iterations 200
 
 # Thinning reduces autocorrelation between saved samples and saves disk space.
 # A value of 20 means we save 1 sample for every 20 generated (10,000 total samples).
-thinning 2000
+thinning 2
 
 # Report progress less frequently for long runs to avoid cluttering the log.
 report_interval 10

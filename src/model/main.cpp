@@ -25,6 +25,10 @@
 #include "sir_age_structured/SimulationResultProcessor.hpp"
 #include "sir_age_structured/caching/SimulationCache.hpp"
 #include "model/PostCalibrationAnalyser.hpp"
+#include "model/SimulationRunner.hpp"
+#include "model/MetricsCalculator.hpp"
+#include "model/AnalysisWriter.hpp"
+#include "model/ResultAggregator.hpp"
 #include "model/optimizers/NUTSSampler.hpp"
 #include "model/objectives/SEPAIHRDGradientObjectiveFunction.hpp"
 
@@ -427,13 +431,24 @@ int main(int argc, char* argv[]) {
                 auto post_analysis_npi_strategy = createNpiStrategy(final_calibrated_params, all_kappa_parameter_names, overall_param_bounds, fixed_kappa_model_index);
                 auto final_model_template = std::make_shared<AgeSEPAIHRDModel>(final_calibrated_params, post_analysis_npi_strategy);
 
+                // Create the 4 required components for dependency injection
+                auto simulation_runner = std::make_unique<SimulationRunner>(final_model_template, solver_strategy);
+                auto metrics_calculator = std::make_unique<MetricsCalculator>();
+                auto analysis_writer = std::make_unique<AnalysisWriter>();
+                auto result_aggregator = std::make_unique<ResultAggregator>();
+
+                // Construct the orchestrator with dependency injection
                 auto post_calibration_analyser = std::make_shared<PostCalibrationAnalyser>(
                     final_model_template,
                     solver_strategy,
                     time_points,
                     initial_state,
                     output_dir,
-                    data
+                    data,
+                    std::move(simulation_runner),
+                    std::move(metrics_calculator),
+                    std::move(analysis_writer),
+                    std::move(result_aggregator)
                 );
 
                 int total_sample_size = mcmc_samples.size();
