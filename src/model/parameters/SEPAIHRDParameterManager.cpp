@@ -147,16 +147,24 @@ Eigen::VectorXd SEPAIHRDParameterManager::getCurrentParameters() const {
 }
 
 void SEPAIHRDParameterManager::updateModelParameters(const Eigen::VectorXd& parameters_from_optimizer) {
+    updateModelParameters(parameters_from_optimizer, model_);
+}
+
+void SEPAIHRDParameterManager::updateModelParameters(const Eigen::VectorXd& parameters_from_optimizer, std::shared_ptr<AgeSEPAIHRDModel> target_model) {
     if (static_cast<size_t>(parameters_from_optimizer.size()) != param_names_.size()) {
         THROW_INVALID_PARAM("SEPAIHRDParameterManager::updateModelParameters", "Parameter vector size mismatch.");
+    }
+
+    if (!target_model) {
+        THROW_INVALID_PARAM("SEPAIHRDParameterManager::updateModelParameters", "Target model is null.");
     }
 
     Eigen::VectorXd constrained_params = applyConstraints(parameters_from_optimizer);
     
     // Get a mutable copy of the model's current parameters
-    SEPAIHRDParameters updated_params = model_->getModelParameters();
+    SEPAIHRDParameters updated_params = target_model->getModelParameters();
     
-    auto npi_strat_base = model_->getNpiStrategy();
+    auto npi_strat_base = target_model->getNpiStrategy();
     PiecewiseConstantNpiStrategy* piecewise_npi_strat = nullptr;
     if (npi_strat_base) {
         piecewise_npi_strat = dynamic_cast<PiecewiseConstantNpiStrategy*>(npi_strat_base.get());
@@ -233,7 +241,7 @@ void SEPAIHRDParameterManager::updateModelParameters(const Eigen::VectorXd& para
     // Set the full parameter struct back to the model.
     // The model's setModelParameters method is responsible for updating all internal state,
     // including re-initializing the beta_strategy_.
-    model_->setModelParameters(updated_params);
+    target_model->setModelParameters(updated_params);
 
     // If any NPI parameters were changed, update the NPI strategy object.
     // This is a direct modification of the strategy object held by the model.

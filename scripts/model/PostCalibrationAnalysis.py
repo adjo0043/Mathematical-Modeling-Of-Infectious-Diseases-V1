@@ -158,8 +158,9 @@ class SEPAIHRDAnalyzer:
             ax = axes[i]
             
             medians = [summary_df.loc[f'{metric_prefix}_age_{j}']['median'] * 100 for j in range(len(AGE_GROUPS))]
-            lower_errors = [(summary_df.loc[f'{metric_prefix}_age_{j}']['median'] - summary_df.loc[f'{metric_prefix}_age_{j}']['q025']) * 100 for j in range(len(AGE_GROUPS))]
-            upper_errors = [(summary_df.loc[f'{metric_prefix}_age_{j}']['q975'] - summary_df.loc[f'{metric_prefix}_age_{j}']['median']) * 100 for j in range(len(AGE_GROUPS))]
+            # Ensure errors are non-negative (handle cases where quantiles might be 0 or inconsistent)
+            lower_errors = [max(0, (summary_df.loc[f'{metric_prefix}_age_{j}']['median'] - summary_df.loc[f'{metric_prefix}_age_{j}']['q025']) * 100) for j in range(len(AGE_GROUPS))]
+            upper_errors = [max(0, (summary_df.loc[f'{metric_prefix}_age_{j}']['q975'] - summary_df.loc[f'{metric_prefix}_age_{j}']['median']) * 100) for j in range(len(AGE_GROUPS))]
             
             ax.bar(AGE_GROUPS, medians, yerr=[lower_errors, upper_errors], color=color, alpha=0.7, capsize=5)
             ax.set_ylabel(f'{metric_prefix} (%)', fontsize=12)

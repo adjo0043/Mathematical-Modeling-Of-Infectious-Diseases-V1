@@ -5,11 +5,11 @@
 
 # iterations: Total number of optimization iterations
 # Range: > 0
-iterations 10
+iterations 1000
 
 # swarm_size: Number of particles in the swarm
 # Range: > 0
-swarm_size 15
+swarm_size 75
 
 # omega_start: Initial inertia weight for velocity update
 # Range: >= 0

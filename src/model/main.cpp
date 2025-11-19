@@ -21,7 +21,7 @@
 #include "model/ReproductionNumberCalculator.hpp"
 #include "sir_age_structured/optimizers/MetropolisHastingsSampler.hpp"
 #include "sir_age_structured/ModelCalibrator.hpp"
-#include "sir_age_structured/solvers/Dropri5SolverStrategy.hpp"
+#include "sir_age_structured/solvers/Dopri5SolverStrategy.hpp"
 #include "sir_age_structured/SimulationResultProcessor.hpp"
 #include "sir_age_structured/caching/SimulationCache.hpp"
 #include "model/PostCalibrationAnalyser.hpp"

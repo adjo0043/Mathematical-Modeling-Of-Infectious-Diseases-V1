@@ -59,14 +59,14 @@ kappa_6 0.08
 kappa_7 0.05
 
 # Initial State Multipliers
-E0_multiplier   0.5
-P0_multiplier   0.5
-A0_multiplier   0.5
-I0_multiplier   0.5
-H0_multiplier   0.5
-ICU0_multiplier 0.5
-R0_multiplier   0.5
-D0_multiplier   0.5
+E0_multiplier   0.2
+P0_multiplier   0.2
+A0_multiplier   0.2
+I0_multiplier   0.2
+H0_multiplier   0.2
+ICU0_multiplier 0.2
+R0_multiplier   0.2
+D0_multiplier   0.2
 
 # Susceptibility / Infectiousness
 a_0      0.01
