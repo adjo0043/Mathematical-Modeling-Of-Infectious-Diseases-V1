@@ -2,11 +2,15 @@
 #include "exceptions/Exceptions.hpp"
 #include "sir_age_structured/SimulationResultProcessor.hpp"
 #include "utils/Logger.hpp"
+#include "model/ModelConstants.hpp"
 #include <cmath>
 #include <algorithm>
 #include <limits>
 #include <sstream>
 #include <future>
+#include <numeric>      
+#include <execution>   
+#include <vector>       
 
 namespace epidemic {
 
@@ -129,7 +133,7 @@ double SEPAIHRDObjectiveFunction::calculate(const Eigen::VectorXd& parameters) c
     const Eigen::VectorXd& N = model_->getPopulationSizes();
     for (int i = 0; i < n_ages; ++i) {
         double sum_non_S = 0.0;
-        for (int j = 1; j < 9; ++j) { // Sum E through D
+        for (int j = 1; j < constants::NUM_COMPARTMENTS_SEPAIHRD; ++j) { // Sum E through D
             sum_non_S += initial_state_for_run(j * n_ages + i);
         }
 
@@ -153,7 +157,7 @@ double SEPAIHRDObjectiveFunction::calculate(const Eigen::VectorXd& parameters) c
     // Recalculate S to maintain population constraint (S = N - sum of all other compartments)
     for (int i = 0; i < n_ages; ++i) {
         double sum_non_S = 0.0;
-        for (int j = 1; j < 9; ++j) { // Sum E through D
+        for (int j = 1; j < constants::NUM_COMPARTMENTS_SEPAIHRD; ++j) { // Sum E through D
             sum_non_S += initial_state_for_run(j * n_ages + i);
         }
         
@@ -321,19 +325,35 @@ double SEPAIHRDObjectiveFunction::calculateSingleLogLikelihood(
 
     Eigen::MatrixXd sim_safe = simulated.cwiseMax(0.0).array() + epsilon;
     
-    double log_likelihood = 0.0;
-
+    // Precompute the log-likelihood terms
     Eigen::MatrixXd term1 = observed.array() * sim_safe.array().log();
     Eigen::MatrixXd term2 = sim_safe;
     Eigen::MatrixXd log_likelihood_terms = term1 - term2;
 
-    for (int i = 0; i < observed.rows(); ++i) {
-        for (int j = 0; j < observed.cols(); ++j) {
+    // Create a vector of indices for parallel reduction
+    const size_t num_rows = observed.rows();
+    const size_t num_cols = observed.cols();
+    std::vector<size_t> indices(num_rows * num_cols);
+    std::iota(indices.begin(), indices.end(), 0);
+
+    // Use std::transform_reduce to parallelize the sum
+    double log_likelihood = std::transform_reduce(
+        std::execution::par, // <-- Run in parallel
+        indices.begin(),
+        indices.end(),
+        0.0,                 // Initial value
+        std::plus<>(),       // Reduction operation (sum)
+        [&](size_t idx) {    // Transform operation (calculate likelihood for element idx)
+            size_t i = idx / num_cols;
+            size_t j = idx % num_cols;
+            
+            // Only include valid points
             if (valid_mask_array(i, j)) {
-                log_likelihood += log_likelihood_terms(i, j);
+                return log_likelihood_terms(i, j);
             }
+            return 0.0;
         }
-    }
+    );
     
     if (std::isnan(log_likelihood) || std::isinf(log_likelihood)) {
          Logger::getInstance().warning(F_NAME, "Log-likelihood is NaN or Inf after calculation. LL: " + std::to_string(log_likelihood) + ". Valid points: " + std::to_string(valid_points));

@@ -4,79 +4,58 @@
 #include "sir_age_structured/interfaces/ISimulationCache.hpp"
 #include <unordered_map>
 #include <string>
-#include <sstream>
 #include <map>
 #include <list>
-#include <iomanip>
+#include <vector>
 #include <optional>
-#include <stdexcept>
+#include <Eigen/Dense>
 
 namespace epidemic {
 
 /**
- * @brief An implementation of ISimulationCache using LFU (Least Frequently Used)
- *        eviction with LRU tie-breaking.
+ * @brief An implementation of ISimulationCache using LFU eviction with LRU tie-breaking.
+ *        Optimized with Zobrist-style hashing for Eigen::VectorXd keys.
  */
 class SimulationCache : public ISimulationCache {
 public:
     /**
      * @brief Constructor.
-     * @param max_size Maximum number of entries in the cache (must be > 0).
-     * @param hash_precision Precision used when converting parameter vectors to keys.
+     * @param max_size Maximum number of entries in the cache.
      */
-    explicit SimulationCache(size_t max_size = 1000, int hash_precision = 8);
+    explicit SimulationCache(size_t max_size = 1000);
 
     // Implementation of the ISimulationCache interface
     std::optional<double> get(const Eigen::VectorXd& parameters) override;
     void set(const Eigen::VectorXd& parameters, double result) override;
     void clear() override;
     size_t size() const override;
+    
+    // Note: This method name is kept for interface compatibility but now returns a stringified hash
     std::string createCacheKey(const Eigen::VectorXd& parameters) const override;
+    
+    // Overloaded for direct hash access (internal optimization)
+    size_t computeHash(const Eigen::VectorXd& parameters) const;
+
     bool getLikelihood(const std::string& key, double& value) override;
     void storeLikelihood(const std::string& key, double value) override;
 
 private:
-    /**
-     * @brief Internal structure for storing cache node data.
-     * 
-     * Contains the cached value along with metadata for LFU cache management.
-     */
     struct CacheNode {
-        /** @brief The cached simulation result value. */
         double value;
-        /** @brief Access frequency counter for LFU eviction policy. */
         int frequency;
-        /** @brief Iterator to this key's position in the frequency list. */
-        std::list<std::string>::iterator freq_list_iter;
+        std::list<size_t>::iterator freq_list_iter; // Stores iterator to hash key
     };
 
-    /** @brief Main cache storage mapping string keys to cache nodes. */
-    std::unordered_map<std::string, CacheNode> cache_;
+    /** @brief Main cache storage mapping hash keys to cache nodes. */
+    std::unordered_map<size_t, CacheNode> cache_;
 
-    /** @brief Frequency map organizing keys by access frequency for LFU eviction. */
-    std::map<int, std::list<std::string>> freq_map_;
+    /** @brief Frequency map organizing hash keys by access frequency. */
+    std::map<int, std::list<size_t>> freq_map_;
 
-    /** @brief Maximum number of entries allowed in the cache. */
     size_t max_size_;
-    
-    /** @brief Decimal precision used for parameter-to-key conversion. */
-    int hash_precision_;
-    
-    /** @brief Current minimum frequency value for efficient LFU eviction. */
     int min_frequency_;
 
-    /**
-     * @brief Updates the access frequency for a cache key.
-     * @param key The cache key whose frequency should be incremented.
-     */
-    void updateFrequency(const std::string& key);
-
-    /**
-     * @brief Converts parameter vector to string key for cache lookup.
-     * @param params The parameter vector to convert.
-     * @return String representation of the parameters for use as cache key.
-     */
-    std::string createStringKey(const Eigen::VectorXd& params) const;
+    void updateFrequency(size_t key);
 };
 
 } // namespace epidemic

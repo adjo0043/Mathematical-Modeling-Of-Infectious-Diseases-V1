@@ -5,7 +5,7 @@
 nuts_warmup 5
 
 # Number of samples to collect after warmup
-nuts_samples 2000
+nuts_samples 20
 
 # Higher values (0.8-0.95) are recommended for NUTS
 nuts_delta_target 0.8

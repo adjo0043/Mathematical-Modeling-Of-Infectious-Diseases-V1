@@ -114,7 +114,7 @@ protected:
         );
         
         // Create cache
-        cache_ = std::make_unique<SimulationCache>(1000, 8);
+        cache_ = std::make_unique<SimulationCache>(1000);
         
         // Set up time points
         setupTimePoints();
@@ -582,10 +582,10 @@ TEST_F(SEPAIHRDObjectiveFunctionTest, CompartmentContributionTest) {
     Eigen::VectorXd zero_vector = Eigen::VectorXd::Zero(NUM_AGE_CLASSES);
     
     // Create separate cache instances for each objective function to avoid cache collisions
-    auto hosp_cache = std::make_unique<SimulationCache>(1000, 8);
-    auto icu_cache = std::make_unique<SimulationCache>(1000, 8);
-    auto deaths_cache = std::make_unique<SimulationCache>(1000, 8);
-    auto total_cache = std::make_unique<SimulationCache>(1000, 8);
+    auto hosp_cache = std::make_unique<SimulationCache>(1000);
+    auto icu_cache = std::make_unique<SimulationCache>(1000);
+    auto deaths_cache = std::make_unique<SimulationCache>(1000);
+    auto total_cache = std::make_unique<SimulationCache>(1000);
     
     // Hospitalizations only
     auto hosp_only_data = std::make_unique<CalibrationData>(
@@ -704,7 +704,7 @@ TEST_F(SEPAIHRDObjectiveFunctionTest, ManualPoissonLikelihoodTest) {
         synthetic_age_classes
     );
 
-    auto synthetic_cache = std::make_unique<SimulationCache>(100, 8);
+    auto synthetic_cache = std::make_unique<SimulationCache>(100);
     
     TestableSEPAIHRDObjectiveFunction testable_obj_func(
         model_,

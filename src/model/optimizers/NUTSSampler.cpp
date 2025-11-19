@@ -76,8 +76,8 @@ OptimizationResult NUTSSampler::optimize(
         std::normal_distribution<> normal(0.0, 1.0);
         Eigen::VectorXd r0 = Eigen::VectorXd::NullaryExpr(theta_m.size(), [&](){ return normal(rng_); });
         
-        std::vector<double> grad_unused;
-        double current_logp = grad_obj->evaluate_with_gradient({theta_m.data(), theta_m.data() + theta_m.size()}, grad_unused);
+        Eigen::VectorXd grad(theta_m.size());
+        double current_logp = grad_obj->evaluate_with_gradient(theta_m, grad);
         if (!std::isfinite(current_logp)) {
             logger.warning("NUTSSampler", "Initial log-probability is non-finite. Aborting iteration " + std::to_string(m) + ". Try a different initial position.");
             if (m > num_warmup_) result.samples.push_back(result.samples.back()); // Re-use last good sample
@@ -186,15 +186,15 @@ double NUTSSampler::findReasonableEpsilon(
     std::normal_distribution<> normal(0.0, 1.0);
     Eigen::VectorXd r = Eigen::VectorXd::NullaryExpr(theta.size(), [&](){ return normal(rng_); });
     
-    std::vector<double> grad_unused;
-    double logp = objective.evaluate_with_gradient({theta.data(), theta.data() + theta.size()}, grad_unused);
+    Eigen::VectorXd grad(theta.size());
+    double logp = objective.evaluate_with_gradient(theta, grad);
     double initial_H = logp - 0.5 * r.dot(r);
     
     Eigen::VectorXd theta_new = theta;
     Eigen::VectorXd r_new = r;
     leapfrog(objective, theta_new, r_new, epsilon, parameterManager);
     
-    double logp_new = objective.evaluate_with_gradient({theta_new.data(), theta_new.data() + theta_new.size()}, grad_unused);
+    double logp_new = objective.evaluate_with_gradient(theta_new, grad);
     double H_new = logp_new - 0.5 * r_new.dot(r_new);
     
     double p_accept = std::exp(H_new - initial_H);
@@ -209,7 +209,7 @@ double NUTSSampler::findReasonableEpsilon(
         r_new = r;
         leapfrog(objective, theta_new, r_new, epsilon, parameterManager);
         
-        logp_new = objective.evaluate_with_gradient({theta_new.data(), theta_new.data() + theta_new.size()}, grad_unused);
+        logp_new = objective.evaluate_with_gradient(theta_new, grad);
         H_new = logp_new - 0.5 * r_new.dot(r_new);
         p_accept = std::exp(H_new - initial_H);
 
@@ -226,17 +226,15 @@ void NUTSSampler::leapfrog(
     double epsilon,
     IParameterManager& parameterManager) const {
     
-    std::vector<double> grad_vec;
-    objective.evaluate_with_gradient({theta.data(), theta.data() + theta.size()}, grad_vec);
-    Eigen::Map<Eigen::VectorXd> grad_start(grad_vec.data(), grad_vec.size());
+    Eigen::VectorXd grad(theta.size());
+    objective.evaluate_with_gradient(theta, grad);
 
-    r += 0.5 * epsilon * grad_start;
+    r += 0.5 * epsilon * grad;
     theta += epsilon * r;
     theta = parameterManager.applyConstraints(theta);
     
-    objective.evaluate_with_gradient({theta.data(), theta.data() + theta.size()}, grad_vec);
-    Eigen::Map<Eigen::VectorXd> grad_end(grad_vec.data(), grad_vec.size());
-    r += 0.5 * epsilon * grad_end;
+    objective.evaluate_with_gradient(theta, grad);
+    r += 0.5 * epsilon * grad;
 }
 
 void NUTSSampler::buildTree(
@@ -252,8 +250,8 @@ void NUTSSampler::buildTree(
         Eigen::VectorXd r_prime = r;
         leapfrog(objective, theta_prime, r_prime, v_direction * epsilon, parameterManager);
         
-        std::vector<double> grad_unused;
-        double logp = objective.evaluate_with_gradient({theta_prime.data(), theta_prime.data() + theta_prime.size()}, grad_unused);
+        Eigen::VectorXd grad(theta_prime.size());
+        double logp = objective.evaluate_with_gradient(theta_prime, grad);
         
         tree.theta_minus = tree.theta_plus = tree.theta_prime = theta_prime;
         tree.r_minus = tree.r_plus = r_prime;

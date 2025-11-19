@@ -71,6 +71,7 @@ set(EPIDEMIC_MODELS_SRCS
     src/model/PieceWiseConstantNPIStrategy.cpp
     src/model/parameters/SEPAIHRDParameterManager.cpp
     src/model/objectives/SEPAIHRDObjectiveFunction.cpp
+    src/model/objectives/SEPAIHRDGradientObjectiveFunction.cpp
     src/model/SEPAIHRDModelCalibration.cpp
     src/model/optimizers/ParticleSwarmOptimizer.cpp
     src/model/optimizers/NUTSSampler.cpp

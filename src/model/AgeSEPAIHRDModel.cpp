@@ -57,12 +57,82 @@ namespace epidemic {
                 beta_baseline_end_time
             );
         }
+
+        resizeWorkingVectors();
     }
     
+    // --- NEW: Copy Constructor for Deep Cloning ---
+    AgeSEPAIHRDModel::AgeSEPAIHRDModel(const AgeSEPAIHRDModel& other)
+        : EpidemicModel(other), // Copy base class parts
+          num_age_classes(other.num_age_classes),
+          N(other.N),
+          M_baseline(other.M_baseline),
+          beta(other.beta),
+          beta_end_times_(other.beta_end_times_),
+          beta_values_(other.beta_values_),
+          a(other.a),
+          h_infec(other.h_infec),
+          theta(other.theta),
+          sigma(other.sigma),
+          gamma_p(other.gamma_p),
+          gamma_A(other.gamma_A),
+          gamma_I(other.gamma_I),
+          gamma_H(other.gamma_H),
+          gamma_ICU(other.gamma_ICU),
+          p(other.p),
+          h(other.h),
+          icu(other.icu),
+          d_H(other.d_H),
+          d_ICU(other.d_ICU),
+          baseline_beta(other.baseline_beta),
+          baseline_theta(other.baseline_theta),
+          E0_multiplier(other.E0_multiplier),
+          P0_multiplier(other.P0_multiplier),
+          A0_multiplier(other.A0_multiplier),
+          I0_multiplier(other.I0_multiplier),
+          H0_multiplier(other.H0_multiplier),
+          ICU0_multiplier(other.ICU0_multiplier),
+          R0_multiplier(other.R0_multiplier),
+          D0_multiplier(other.D0_multiplier) 
+    {
+        // Deep copy NPI strategy
+        if (other.npi_strategy) {
+            this->npi_strategy = other.npi_strategy->clone();
+        }
+
+        // Deep copy Beta strategy (unique_ptr)
+        if (other.beta_strategy_) {
+            this->beta_strategy_ = std::make_unique<PiecewiseConstantParameterStrategy>(*other.beta_strategy_);
+        }
+        
+        // Re-allocate working vectors for this new thread-local instance
+        resizeWorkingVectors();
+    }
+
+    // --- NEW: Clone Method ---
+    std::shared_ptr<AgeSEPAIHRDModel> AgeSEPAIHRDModel::clone() const {
+        return std::make_shared<AgeSEPAIHRDModel>(*this);
+    }
+
+    void AgeSEPAIHRDModel::resizeWorkingVectors() {
+        cached_infectious_pressure.resize(num_age_classes);
+        cached_infectious_total.resize(num_age_classes);
+        cached_lambda.resize(num_age_classes);
+        cached_dS.resize(num_age_classes);
+        cached_dE.resize(num_age_classes);
+        cached_dP.resize(num_age_classes);
+        cached_dA.resize(num_age_classes);
+        cached_dI.resize(num_age_classes);
+        cached_dH.resize(num_age_classes);
+        cached_dICU.resize(num_age_classes);
+        cached_dR.resize(num_age_classes);
+        cached_dD.resize(num_age_classes);
+    }
+
     void AgeSEPAIHRDModel::computeDerivatives(const std::vector<double>& state,
                                              std::vector<double>& derivatives,
                                              double time) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // REMOVED: std::lock_guard<std::mutex> lock(mutex_);
     
         int n = num_age_classes;
         if (state.size() != static_cast<size_t>(getStateSize()) || derivatives.size() != static_cast<size_t>(getStateSize())) {
@@ -83,46 +153,53 @@ namespace epidemic {
         }
         
         // 1. Calculate the total infectious pressure exerted BY each age group, scaled by their infectiousness `h_infec`.
-        Eigen::VectorXd infectious_pressure = Eigen::VectorXd::Zero(n);
-        Eigen::VectorXd infectious_total = P.array() + A.array() + theta * I.array();
+        cached_infectious_total = P.array() + A.array() + theta * I.array();
 
-        for (int j = 0; j < n; ++j) {
-            if (N(j) > constants::MIN_POPULATION_FOR_DIVISION) {
-                infectious_pressure(j) = h_infec(j) * infectious_total(j) / N(j);
-            }
-        }    
+        // Vectorized calculation using select to handle division by zero (or small N)
+        cached_infectious_pressure = (N.array() > constants::MIN_POPULATION_FOR_DIVISION).select(
+            h_infec.array() * cached_infectious_total.array() / N.array(),
+            0.0
+        );
+
         // 2. Get the NPI-adjusted contact rates.
         double current_beta = computeBeta(time);
-        Eigen::MatrixXd effective_contact_matrix = current_reduction_factor * M_baseline;
+        // Note: We could also cache effective_contact_matrix if M_baseline is large, but it depends on time-varying NPIs.
+        // For now, we keep it as is, but avoid re-allocating if possible. 
+        // Since effective_contact_matrix size depends on n, we can't easily cache it without a matrix member.
+        // However, the matrix-vector product below returns a vector, which we can store in cached_lambda.
+        
         // 3. Calculate the force of infection (lambda) for each age group.
-        Eigen::VectorXd lambda = current_beta * a.array() * (effective_contact_matrix * infectious_pressure).array();
-        lambda = lambda.cwiseMax(0.0);
+        // lambda = current_beta * a * (effective_contact_matrix * infectious_pressure)
+        // We do this in steps to avoid temporary allocations if possible, but Eigen handles expression templates well.
+        
+        cached_lambda = current_beta * a.array() * (current_reduction_factor * M_baseline * cached_infectious_pressure).array();
+        cached_lambda = cached_lambda.cwiseMax(0.0);
     
-        Eigen::VectorXd dS = -lambda.array() * S.array();
-        Eigen::VectorXd dE = lambda.array() * S.array() - sigma * E.array();
-        Eigen::VectorXd dP = sigma * E.array() - gamma_p * P.array();
-        Eigen::VectorXd dA = p.array() * gamma_p * P.array() - gamma_A * A.array();
-        Eigen::VectorXd dI = (1.0 - p.array()) * gamma_p * P.array() - (gamma_I + h.array()) * I.array();
-        Eigen::VectorXd dH = h.array() * I.array() - (gamma_H + d_H.array() + icu.array()) * H.array();
-        Eigen::VectorXd dICU = icu.array() * H.array() - (gamma_ICU + d_ICU.array()) * ICU_.array();
-        Eigen::VectorXd dR = gamma_A * A.array() + gamma_I * I.array() + gamma_H * H.array() + gamma_ICU * ICU_.array();
-        Eigen::VectorXd dD = d_H.array() * H.array() + d_ICU.array() * ICU_.array();
+        cached_dS = -cached_lambda.array() * S.array();
+        cached_dE = cached_lambda.array() * S.array() - sigma * E.array();
+        cached_dP = sigma * E.array() - gamma_p * P.array();
+        cached_dA = p.array() * gamma_p * P.array() - gamma_A * A.array();
+        cached_dI = (1.0 - p.array()) * gamma_p * P.array() - (gamma_I + h.array()) * I.array();
+        cached_dH = h.array() * I.array() - (gamma_H + d_H.array() + icu.array()) * H.array();
+        cached_dICU = icu.array() * H.array() - (gamma_ICU + d_ICU.array()) * ICU_.array();
+        cached_dR = gamma_A * A.array() + gamma_I * I.array() + gamma_H * H.array() + gamma_ICU * ICU_.array();
+        cached_dD = d_H.array() * H.array() + d_ICU.array() * ICU_.array();
     
-        Eigen::Map<Eigen::VectorXd>(&derivatives[0*n], n) = dS;
-        Eigen::Map<Eigen::VectorXd>(&derivatives[1*n], n) = dE;
-        Eigen::Map<Eigen::VectorXd>(&derivatives[2*n], n) = dP;
-        Eigen::Map<Eigen::VectorXd>(&derivatives[3*n], n) = dA;
-        Eigen::Map<Eigen::VectorXd>(&derivatives[4*n], n) = dI;
-        Eigen::Map<Eigen::VectorXd>(&derivatives[5*n], n) = dH;
-        Eigen::Map<Eigen::VectorXd>(&derivatives[6*n], n) = dICU;
-        Eigen::Map<Eigen::VectorXd>(&derivatives[7*n], n) = dR;
-        Eigen::Map<Eigen::VectorXd>(&derivatives[8*n], n) = dD;
+        Eigen::Map<Eigen::VectorXd>(&derivatives[0*n], n) = cached_dS;
+        Eigen::Map<Eigen::VectorXd>(&derivatives[1*n], n) = cached_dE;
+        Eigen::Map<Eigen::VectorXd>(&derivatives[2*n], n) = cached_dP;
+        Eigen::Map<Eigen::VectorXd>(&derivatives[3*n], n) = cached_dA;
+        Eigen::Map<Eigen::VectorXd>(&derivatives[4*n], n) = cached_dI;
+        Eigen::Map<Eigen::VectorXd>(&derivatives[5*n], n) = cached_dH;
+        Eigen::Map<Eigen::VectorXd>(&derivatives[6*n], n) = cached_dICU;
+        Eigen::Map<Eigen::VectorXd>(&derivatives[7*n], n) = cached_dR;
+        Eigen::Map<Eigen::VectorXd>(&derivatives[8*n], n) = cached_dD;
     }
     
     void AgeSEPAIHRDModel::applyIntervention(const std::string& name,
             [[maybe_unused]] double time,
             const Eigen::VectorXd& params) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // REMOVED: std::lock_guard<std::mutex> lock(mutex_);
     
         if (name == "mask_mandate" || name == "transmission_reduction") {
             if (params.size() != 1) THROW_INVALID_PARAM("applyIntervention", name + " requires 1 parameter (transmission_reduction [0,1]).");
@@ -148,7 +225,7 @@ namespace epidemic {
     }
     
     void AgeSEPAIHRDModel::reset() {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // REMOVED: std::lock_guard<std::mutex> lock(mutex_);
         beta = baseline_beta;
         theta = baseline_theta;
         beta_strategy_.reset(); // Also reset the beta strategy
@@ -156,12 +233,12 @@ namespace epidemic {
     }
     
     int AgeSEPAIHRDModel::getStateSize() const {
-        return 9 * num_age_classes;
+        return constants::NUM_COMPARTMENTS_SEPAIHRD * num_age_classes;
     }
     
     std::vector<std::string> AgeSEPAIHRDModel::getStateNames() const {        
         std::vector<std::string> names;
-        names.reserve(9 * num_age_classes);
+        names.reserve(constants::NUM_COMPARTMENTS_SEPAIHRD * num_age_classes);
         std::vector<std::string> compartments = {"S", "E", "P", "A", "I", "H", "ICU", "R", "D"};
     
         for (const auto& comp : compartments) {
@@ -195,27 +272,27 @@ namespace epidemic {
     const Eigen::VectorXd& AgeSEPAIHRDModel::getMortalityRateICU() const { return d_ICU; }
     
     void AgeSEPAIHRDModel::setTransmissionRate(double new_beta) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // REMOVED: std::lock_guard<std::mutex> lock(mutex_);
         if (new_beta < 0.0) THROW_INVALID_PARAM("setTransmissionRate", "Transmission rate cannot be negative.");
         beta = new_beta;
         beta_strategy_.reset();
     }
 
     void AgeSEPAIHRDModel::setSusceptibility(const Eigen::VectorXd& new_a) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // REMOVED: std::lock_guard<std::mutex> lock(mutex_);
         if (new_a.size() != num_age_classes) THROW_INVALID_PARAM("setSusceptibility", "Susceptibility vector dimension mismatch.");
         if ((new_a.array() < 0).any()) THROW_INVALID_PARAM("setSusceptibility", "Susceptibility values cannot be negative.");
         a = new_a;
     }
     void AgeSEPAIHRDModel::setInfectiousness(const Eigen::VectorXd& new_h_infec) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // REMOVED: std::lock_guard<std::mutex> lock(mutex_);
         if (new_h_infec.size() != num_age_classes) THROW_INVALID_PARAM("setInfectiousness", "Infectiousness vector dimension mismatch.");
         if ((new_h_infec.array() < 0).any()) THROW_INVALID_PARAM("setInfectiousness", "Infectiousness values cannot be negative.");
         h_infec = new_h_infec;
     }
 
     void AgeSEPAIHRDModel::setReducedTransmissibility(double new_theta) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // REMOVED: std::lock_guard<std::mutex> lock(mutex_);
         if (new_theta < 0.0) THROW_INVALID_PARAM("setReducedTransmissibility", "Reduced transmissibility factor cannot be negative.");
         theta = new_theta;
     }
@@ -225,7 +302,7 @@ namespace epidemic {
     }
 
     SEPAIHRDParameters AgeSEPAIHRDModel::getModelParameters() const {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // REMOVED: std::lock_guard<std::mutex> lock(mutex_);
         SEPAIHRDParameters params;
         params.N = N;
         params.M_baseline = M_baseline;
@@ -266,7 +343,7 @@ namespace epidemic {
     }
 
     void AgeSEPAIHRDModel::setModelParameters(const SEPAIHRDParameters& params) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // REMOVED: std::lock_guard<std::mutex> lock(mutex_);
 
         if (params.N.size() != num_age_classes || 
             params.a.size() != num_age_classes ||

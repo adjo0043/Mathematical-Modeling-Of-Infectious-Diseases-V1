@@ -254,7 +254,9 @@ void ParticleSwarmOptimization::initializeSwarm(
         swarm[i].quantum_position.resize(n);
         
         // Thread-local RNG for parallel execution
-        std::mt19937 local_rng(rng_() + i);
+        std::vector<unsigned int> seed_data = {static_cast<unsigned int>(rng_()), static_cast<unsigned int>(i)};
+        std::seed_seq seed_seq(seed_data.begin(), seed_data.end());
+        std::mt19937 local_rng(seed_seq);
         std::uniform_real_distribution<> local_uniform(0.0, 1.0);
         
         // First particle uses initial parameters if provided
@@ -774,7 +776,9 @@ void ParticleSwarmOptimization::restartSwarm(
     #pragma omp parallel for if(use_parallel_)
     for (int i = keep_best_count; i < swarm_size_; ++i) {
         // Thread-local RNG
-        std::mt19937 local_rng(rng_() + i);
+        std::vector<unsigned int> seed_data = {static_cast<unsigned int>(rng_()), static_cast<unsigned int>(i)};
+        std::seed_seq seed_seq(seed_data.begin(), seed_data.end());
+        std::mt19937 local_rng(seed_seq);
         std::uniform_real_distribution<> local_uniform(0.0, 1.0);
         std::normal_distribution<> local_normal(0.0, 1.0);
         

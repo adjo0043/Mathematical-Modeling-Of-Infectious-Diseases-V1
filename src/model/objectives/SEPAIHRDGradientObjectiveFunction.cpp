@@ -1,0 +1,186 @@
+#include "model/objectives/SEPAIHRDGradientObjectiveFunction.hpp"
+#include "model/AgeSEPAIHRDsimulator.hpp"
+#include "model/parameters/SEPAIHRDParameterManager.hpp"
+#include "sir_age_structured/SimulationResultProcessor.hpp"
+#include "model/ModelConstants.hpp"
+#include "utils/Logger.hpp"
+#include <numeric>
+#include <algorithm>
+#include <future>
+#include <vector>
+#include <cmath>
+
+namespace epidemic {
+
+double SEPAIHRDGradientObjectiveFunction::evaluate_with_gradient(
+    const Eigen::VectorXd& params, 
+    Eigen::VectorXd& grad) const {
+    
+    const int n_params = params.size();
+    grad.resize(n_params);
+
+    // 1. Central Value (Main Thread)
+    const double f_center = SEPAIHRDObjectiveFunction::calculate(params);
+
+    if (!std::isfinite(f_center)) {
+        epidemic::Logger::getInstance().warning("SEPAIHRDGradient", 
+            "Central objective value is non-finite. Gradient set to zero.");
+        grad.setZero();
+        return f_center;
+    }
+
+    const double eps = epsilon_;
+
+    // 2. Parallel Gradient Calculation using CLONES
+    #pragma omp parallel for
+    for (int i = 0; i < n_params; ++i) {
+        // A. Clone the model for this thread
+        auto thread_model = model_->clone();
+        
+        // B. Create a thread-local ParameterManager for the cloned model
+        SEPAIHRDParameterManager temp_manager(thread_model, 
+             parameterManager_.getParameterNames(), 
+             {}, {}); // Sigmas/bounds irrelevant for update
+             
+        Eigen::VectorXd params_plus = params;
+        params_plus[i] += eps;
+
+        try {
+            temp_manager.updateModelParameters(params_plus);
+        } catch (...) {
+            grad[i] = 0.0;
+            continue;
+        }
+
+        // C. Prepare Initial State (Logic from SEPAIHRDObjectiveFunction::calculate)
+        Eigen::VectorXd initial_state_for_run = initial_state_;
+        int n_ages = thread_model->getNumAgeClasses();
+
+        auto get_multiplier = [&](const std::string& name) -> double {
+            int idx = -1;
+            const auto& names = parameterManager_.getParameterNames();
+            auto it = std::find(names.begin(), names.end(), name);
+            if (it != names.end()) {
+                idx = std::distance(names.begin(), it);
+            }
+            return (idx != -1) ? params_plus(idx) : 1.0;
+        };
+
+        double e0_mult = get_multiplier("E0_multiplier");
+        double p0_mult = get_multiplier("P0_multiplier");
+        double a0_mult = get_multiplier("A0_multiplier");
+        double i0_mult = get_multiplier("I0_multiplier");
+        double h0_mult = get_multiplier("H0_multiplier");
+        double icu0_mult = get_multiplier("ICU0_multiplier");
+        double r0_mult = get_multiplier("R0_multiplier");
+        double d0_mult = get_multiplier("D0_multiplier");
+
+        // Recalculate S
+        const Eigen::VectorXd& N = thread_model->getPopulationSizes();
+        bool valid_state = true;
+        for (int k = 0; k < n_ages; ++k) {
+            double sum_non_S = 0.0;
+            for (int j = 1; j < constants::NUM_COMPARTMENTS_SEPAIHRD; ++j) {
+                sum_non_S += initial_state_for_run(j * n_ages + k);
+            }
+            if (sum_non_S > N(k) || sum_non_S < 0) {
+                valid_state = false; break;
+            }
+            initial_state_for_run(k) = N(k) - sum_non_S;
+        }
+
+        if (valid_state) {
+            initial_state_for_run.segment(1 * n_ages, n_ages) *= e0_mult;
+            initial_state_for_run.segment(2 * n_ages, n_ages) *= p0_mult;
+            initial_state_for_run.segment(3 * n_ages, n_ages) *= a0_mult;
+            initial_state_for_run.segment(4 * n_ages, n_ages) *= i0_mult;
+            initial_state_for_run.segment(5 * n_ages, n_ages) *= h0_mult;
+            initial_state_for_run.segment(6 * n_ages, n_ages) *= icu0_mult;
+            initial_state_for_run.segment(7 * n_ages, n_ages) *= r0_mult;
+            initial_state_for_run.segment(8 * n_ages, n_ages) *= d0_mult;
+
+            for (int k = 0; k < n_ages; ++k) {
+                double sum_non_S = 0.0;
+                for (int j = 1; j < constants::NUM_COMPARTMENTS_SEPAIHRD; ++j) {
+                    sum_non_S += initial_state_for_run(j * n_ages + k);
+                }
+                if (sum_non_S > N(k) || sum_non_S < 0) {
+                    valid_state = false; break;
+                }
+                initial_state_for_run(k) = N(k) - sum_non_S;
+            }
+        }
+
+        if (!valid_state) {
+            grad[i] = 0.0;
+            continue;
+        }
+
+        // D. Run Simulation
+        AgeSEPAIHRDSimulator thread_sim(
+            thread_model,
+            solver_strategy_, 
+            time_points_.front(),
+            time_points_.back(),
+            1.0,
+            abs_err_,
+            rel_err_
+        );
+
+        SimulationResult result = thread_sim.run(initial_state_for_run, time_points_);
+        
+        double f_plus = -std::numeric_limits<double>::infinity();
+        
+        if (result.isValid()) {
+             // E. Calculate Likelihood
+             int num_compartments = AgeSEPAIHRDSimulator::NUM_COMPARTMENTS;
+             Eigen::MatrixXd I_data = SimulationResultProcessor::getCompartmentData(result, *thread_model, "I", num_compartments);
+             Eigen::MatrixXd H_data = SimulationResultProcessor::getCompartmentData(result, *thread_model, "H", num_compartments);
+             Eigen::MatrixXd D_data = SimulationResultProcessor::getCompartmentData(result, *thread_model, "D", num_compartments);
+
+             Eigen::VectorXd h_rates = thread_model->getHospRate(); 
+             Eigen::VectorXd icu_admission_rates = thread_model->getIcuRate(); 
+        
+             Eigen::MatrixXd sim_hosp = (I_data.array().rowwise() * h_rates.transpose().array()).matrix();
+             Eigen::MatrixXd sim_icu = (H_data.array().rowwise() * icu_admission_rates.transpose().array()).matrix();
+             
+             Eigen::MatrixXd sim_deaths;
+             sim_deaths.resize(time_points_.size(), n_ages);
+             sim_deaths.setZero();
+             
+             if (time_points_.size() > 0) {
+                sim_deaths.row(0) = D_data.row(0) - initial_state_for_run.segment(n_ages * AgeSEPAIHRDSimulator::D_COMPARTMENT_OFFSET, n_ages).transpose();
+                if (time_points_.size() > 1) {
+                    sim_deaths.bottomRows(time_points_.size() - 1) = D_data.bottomRows(time_points_.size() - 1) - D_data.topRows(time_points_.size() - 1);
+                }
+                sim_deaths = sim_deaths.cwiseMax(0.0);
+             }
+
+             double ll_hosp = calculateSingleLogLikelihood(sim_hosp, observed_data_.getNewHospitalizations(), "Hospitalizations");
+             double ll_icu = calculateSingleLogLikelihood(sim_icu, observed_data_.getNewICU(), "ICU Admissions");
+             double ll_deaths = calculateSingleLogLikelihood(sim_deaths, observed_data_.getNewDeaths(), "Deaths");
+             
+             f_plus = ll_hosp + ll_icu + ll_deaths;
+             
+             if (std::isnan(f_plus) || std::isinf(f_plus)) {
+                 if (ll_hosp <= std::numeric_limits<double>::lowest() / 2.0 ||
+                    ll_icu  <= std::numeric_limits<double>::lowest() / 2.0 ||
+                    ll_deaths <= std::numeric_limits<double>::lowest() / 2.0 ) {
+                     f_plus = std::numeric_limits<double>::lowest();
+                }
+             }
+        } else {
+            f_plus = std::numeric_limits<double>::lowest();
+        }
+
+        if (std::isfinite(f_plus)) {
+            grad[i] = (f_plus - f_center) / eps;
+        } else {
+            grad[i] = 0.0;
+        }
+    }
+
+    return f_center;
+}
+
+} // namespace epidemic
