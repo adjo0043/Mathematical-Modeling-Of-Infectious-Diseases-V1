@@ -131,10 +131,16 @@ Eigen::VectorXd CalibrationData::getInitialSEPAIHRDState(
     double gamma_a,    
     double gamma_i,    
     const Eigen::VectorXd& p_asymptomatic, 
-    const Eigen::VectorXd& /*h_hospitalized  */
+    const Eigen::VectorXd& h_hospitalized
 ) const {
     if (n_data_points == 0) {
         throw std::runtime_error("Cannot get initial SEPAIHRD state: No data points loaded.");
+    }
+    if (p_asymptomatic.size() != num_age_classes) {
+        throw std::runtime_error("p_asymptomatic vector size mismatch with num_age_classes.");
+    }
+    if (h_hospitalized.size() != num_age_classes) {
+        throw std::runtime_error("h_hospitalization vector size mismatch with num_age_classes.");
     }
     if (cumulative_deaths.rows() == 0 || cumulative_icu.rows() == 0 || cumulative_hospitalizations.rows() == 0 || cumulative_confirmed_cases.rows() == 0) {
         throw std::runtime_error("Cannot get initial SEPAIHRD state: Required cumulative data matrices are empty.");

@@ -333,27 +333,15 @@ double SEPAIHRDObjectiveFunction::calculateSingleLogLikelihood(
     // Create a vector of indices for parallel reduction
     const size_t num_rows = observed.rows();
     const size_t num_cols = observed.cols();
-    std::vector<size_t> indices(num_rows * num_cols);
-    std::iota(indices.begin(), indices.end(), 0);
-
-    // Use std::transform_reduce to parallelize the sum
-    double log_likelihood = std::transform_reduce(
-        std::execution::par, // <-- Run in parallel
-        indices.begin(),
-        indices.end(),
-        0.0,                 // Initial value
-        std::plus<>(),       // Reduction operation (sum)
-        [&](size_t idx) {    // Transform operation (calculate likelihood for element idx)
-            size_t i = idx / num_cols;
-            size_t j = idx % num_cols;
-            
-            // Only include valid points
+    
+    double log_likelihood = 0.0;
+    for (size_t i = 0; i < num_rows; ++i) {
+        for (size_t j = 0; j < num_cols; ++j) {
             if (valid_mask_array(i, j)) {
-                return log_likelihood_terms(i, j);
+                log_likelihood += log_likelihood_terms(i, j);
             }
-            return 0.0;
         }
-    );
+    }
     
     if (std::isnan(log_likelihood) || std::isinf(log_likelihood)) {
          Logger::getInstance().warning(F_NAME, "Log-likelihood is NaN or Inf after calculation. LL: " + std::to_string(log_likelihood) + ". Valid points: " + std::to_string(valid_points));

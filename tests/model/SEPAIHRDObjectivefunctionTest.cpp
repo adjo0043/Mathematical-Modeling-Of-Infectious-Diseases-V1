@@ -174,6 +174,20 @@ protected:
         
         test_params_.d_ICU = Eigen::VectorXd(NUM_AGE_CLASSES);
         test_params_.d_ICU << 0.20, 0.30, 0.40, 0.50; // ICU mortality
+
+        // Susceptibility and Infectiousness
+        test_params_.a = Eigen::VectorXd::Ones(NUM_AGE_CLASSES);
+        test_params_.h_infec = Eigen::VectorXd::Ones(NUM_AGE_CLASSES);
+
+        // Initial state multipliers
+        test_params_.E0_multiplier = 1.0;
+        test_params_.P0_multiplier = 1.0;
+        test_params_.A0_multiplier = 1.0;
+        test_params_.I0_multiplier = 1.0;
+        test_params_.H0_multiplier = 1.0;
+        test_params_.ICU0_multiplier = 1.0;
+        test_params_.R0_multiplier = 1.0;
+        test_params_.D0_multiplier = 1.0;
         
         // NPI parameters (will be overridden by strategy)
         test_params_.kappa_end_times = {13.0, 63.0, 111.0, 305.0};
