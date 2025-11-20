@@ -213,15 +213,26 @@ PosteriorPredictiveData ResultAggregator::aggregatePosteriorPredictives(
         Eigen::MatrixXd daily_icu = Eigen::MatrixXd::Zero(T, A);
         Eigen::MatrixXd daily_deaths = Eigen::MatrixXd::Zero(T, A);
         
+        // Initialize previous cumulative values from initial state
+        Eigen::VectorXd prev_CumH = initial_state.segment(9 * A, A);
+        Eigen::VectorXd prev_CumICU = initial_state.segment(10 * A, A);
+        Eigen::VectorXd prev_D = initial_state.segment(8 * A, A);
+
         for (int t = 0; t < T; ++t) {
-            Eigen::Map<const Eigen::VectorXd> I_t(&sim_result.solution[t][4 * A], A);
-            Eigen::Map<const Eigen::VectorXd> H_t(&sim_result.solution[t][5 * A], A);
-            Eigen::Map<const Eigen::VectorXd> ICU_t(&sim_result.solution[t][6 * A], A);
+            Eigen::Map<const Eigen::VectorXd> CumH_t(&sim_result.solution[t][9 * A], A);
+            Eigen::Map<const Eigen::VectorXd> CumICU_t(&sim_result.solution[t][10 * A], A);
+            Eigen::Map<const Eigen::VectorXd> D_t(&sim_result.solution[t][8 * A], A);
             
             for (int age = 0; age < A; ++age) {
-                daily_hosp(t, age) = params.h(age) * I_t(age);
-                daily_icu(t, age) = params.icu(age) * H_t(age);
-                daily_deaths(t, age) = params.d_H(age) * H_t(age) + params.d_ICU(age) * ICU_t(age);
+                // Calculate daily flow as difference in cumulative states
+                daily_hosp(t, age) = std::max(0.0, CumH_t(age) - prev_CumH(age));
+                daily_icu(t, age) = std::max(0.0, CumICU_t(age) - prev_CumICU(age));
+                daily_deaths(t, age) = std::max(0.0, D_t(age) - prev_D(age));
+                
+                // Update previous values for next step
+                prev_CumH(age) = CumH_t(age);
+                prev_CumICU(age) = CumICU_t(age);
+                prev_D(age) = D_t(age);
             }
         }
         

@@ -248,10 +248,16 @@ int main(int argc, char* argv[]) {
         double abs_err = 1.0e-6;
         double rel_err = 1.0e-6;
 
-        auto initial_state = data.getInitialSEPAIHRDState(
+        auto initial_state_original = data.getInitialSEPAIHRDState(
             params.sigma, params.gamma_p, params.gamma_A, 
             params.gamma_I, params.p, params.h
         );
+
+        // Extend initial state to include CumH and CumICU (initialized to 0)
+        Eigen::VectorXd initial_state(11 * num_age_classes);
+        initial_state.head(9 * num_age_classes) = initial_state_original;
+        initial_state.segment(9 * num_age_classes, num_age_classes).setZero();  // CumH
+        initial_state.segment(10 * num_age_classes, num_age_classes).setZero(); // CumICU
 
         // Display initial state
         for (int i = 0; i < num_age_classes; ++i) {
@@ -264,7 +270,9 @@ int main(int argc, char* argv[]) {
                  << "H: " << initial_state[i + 5 * num_age_classes] << ", "
                  << "ICU: " << initial_state[i + 6 * num_age_classes] << ", "
                  << "R: " << initial_state[i + 7 * num_age_classes] << ", "
-                 << "D: " << initial_state[i + 8 * num_age_classes]
+                 << "D: " << initial_state[i + 8 * num_age_classes] << ", "
+                 << "CumH: " << initial_state[i + 9 * num_age_classes] << ", "
+                 << "CumICU: " << initial_state[i + 10 * num_age_classes]
                  << endl;
         }
 

@@ -18,14 +18,12 @@ mcmc_iterations 20000
 thinning 20
 
 # Report progress less frequently for long runs to avoid cluttering the log.
-report_interval 10
+report_interval 100
 
 # Calculating the posterior mean is a good practice to find a single best-fit set.
 calculate_posterior_mean 1.0
 
 # --- Performance & Parallelization Settings ---
-# Enable parallel evaluation. This is CRITICAL for performance with a slow
-# objective function, especially when refinement is enabled.
 mcmc_enable_parallel 1.0
 
 # Adjust to the number of available CPU cores on your machine. 8 is a good start.
@@ -35,28 +33,18 @@ mcmc_num_threads 4
 mcmc_enable_vectorization 1.0
 
 # --- Proposal & Refinement Strategy ---
-# The initial step size. With adaptation enabled, this is less critical, but a
-# smaller value is a safer start for a high-dimensional problem.
 mcmc_step_size 0.01
 
-# Enable proposal refinement. This costs more evaluations per step but can
-# drastically improve acceptance rates and overall convergence speed for
-# complex posterior geometries. Highly recommended for this model.
 mcmc_enable_refinement 1.0
 
-# Number of refinement steps. 5 is a reasonable default.
 mcmc_refinement_steps 5
 
 # --- Adaptive Sampling Settings ---
-# Enable adaptive step-size. This is the most important feature for a complex
-# model, as it automatically tunes the sampler for optimal performance.
+
 mcmc_adaptive_step 1.0
 
-# The target acceptance rate. For high-dimensional problems, a rate around 0.234
-# is theoretically optimal. The previous value of 0.44 is better for low-d problems.
+
 mcmc_target_acceptance 0.234
 
-# The learning rate for the adaptation. 0.05 is a robust default.
-mcmc_adaptation_rate 0.05
 
-# --- END OF FILE mcmc_settings.txt ---
+mcmc_adaptation_rate 0.05

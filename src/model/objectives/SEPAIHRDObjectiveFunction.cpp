@@ -108,16 +108,32 @@ double SEPAIHRDObjectiveFunction::calculate(const Eigen::VectorXd& parameters) c
     // 5. Process Results into Local Matrices
     int nc = AgeSEPAIHRDSimulator::NUM_COMPARTMENTS;
     // We can't use cached_sim_data_ here as it's shared.
-    Eigen::MatrixXd I_data = SimulationResultProcessor::getCompartmentData(res, *local_model, "I", nc);
-    Eigen::MatrixXd H_data = SimulationResultProcessor::getCompartmentData(res, *local_model, "H", nc);
     Eigen::MatrixXd D_data = SimulationResultProcessor::getCompartmentData(res, *local_model, "D", nc);
+    Eigen::MatrixXd CumH_data = SimulationResultProcessor::getCompartmentData(res, *local_model, "CumH", nc);
+    Eigen::MatrixXd CumICU_data = SimulationResultProcessor::getCompartmentData(res, *local_model, "CumICU", nc);
 
-    // Calculate Derived Metrics
-    Eigen::VectorXd h_rates = local_model->getHospRate();
-    Eigen::VectorXd icu_rates = local_model->getIcuRate();
+    // Calculate Derived Metrics (Daily Incidence from Cumulative States)
+    Eigen::MatrixXd local_sim_hosp(CumH_data.rows(), CumH_data.cols());
+    Eigen::MatrixXd local_sim_icu(CumICU_data.rows(), CumICU_data.cols());
     
-    Eigen::MatrixXd local_sim_hosp = (I_data.array().rowwise() * h_rates.transpose().array()).matrix();
-    Eigen::MatrixXd local_sim_icu = (H_data.array().rowwise() * icu_rates.transpose().array()).matrix();
+    if (!time_points_.empty()) {
+        // First row: Cum(t0) - Cum_initial
+        local_sim_hosp.row(0) = CumH_data.row(0) - init_state.segment(n_ages * 9, n_ages).transpose();
+        local_sim_icu.row(0) = CumICU_data.row(0) - init_state.segment(n_ages * 10, n_ages).transpose();
+        
+        // Subsequent rows: Cum(t) - Cum(t-1)
+        if (time_points_.size() > 1) {
+             local_sim_hosp.bottomRows(time_points_.size()-1) = CumH_data.bottomRows(time_points_.size()-1) - CumH_data.topRows(time_points_.size()-1);
+             local_sim_icu.bottomRows(time_points_.size()-1) = CumICU_data.bottomRows(time_points_.size()-1) - CumICU_data.topRows(time_points_.size()-1);
+        }
+        
+        // Ensure non-negative
+        local_sim_hosp = local_sim_hosp.cwiseMax(0.0);
+        local_sim_icu = local_sim_icu.cwiseMax(0.0);
+    } else {
+        local_sim_hosp.setZero(CumH_data.rows(), CumH_data.cols());
+        local_sim_icu.setZero(CumICU_data.rows(), CumICU_data.cols());
+    }
     
     Eigen::MatrixXd local_sim_deaths;
     if (!time_points_.empty()) {

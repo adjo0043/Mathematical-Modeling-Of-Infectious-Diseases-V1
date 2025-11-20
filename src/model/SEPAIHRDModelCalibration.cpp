@@ -48,6 +48,28 @@ SEPAIHRDModelCalibration::SEPAIHRDModelCalibration(
              THROW_INVALID_PARAM("SEPAIHRDModelCalibration", "Initial state derived from calibration data is empty.");
         }
 
+        // Resize to include cumulative compartments if necessary
+        int num_age_classes = model_->getNumAgeClasses();
+        // Assuming constants::NUM_COMPARTMENTS_SEPAIHRD is 11
+        int expected_size = num_age_classes * 11; 
+        
+        if (initial_state_cached_.size() == num_age_classes * 9 && expected_size == num_age_classes * 11) {
+            Eigen::VectorXd expanded_state = Eigen::VectorXd::Zero(expected_size);
+            // Copy existing 9 compartments (S, E, P, A, I, H, ICU, R, D)
+            for (int i = 0; i < 9; ++i) {
+                expanded_state.segment(i * num_age_classes, num_age_classes) = 
+                    initial_state_cached_.segment(i * num_age_classes, num_age_classes);
+            }
+            // CumH (index 9) and CumICU (index 10) are already 0 from setZero initialization
+            initial_state_cached_ = expanded_state;
+        } else if (initial_state_cached_.size() != expected_size) {
+             // If it's not 9 and not 11, something is wrong
+             THROW_INVALID_PARAM("SEPAIHRDModelCalibration", 
+                "Initial state size mismatch. Expected " + std::to_string(expected_size) + 
+                " or " + std::to_string(num_age_classes * 9) + 
+                ", got " + std::to_string(initial_state_cached_.size()));
+        }
+
         try {
             parameter_manager_ = std::make_unique<SEPAIHRDParameterManager>(
                 model_, params_to_calibrate_, proposal_sigmas_, param_bounds_);

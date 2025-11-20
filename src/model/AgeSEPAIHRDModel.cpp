@@ -95,6 +95,8 @@ namespace epidemic {
         double* __restrict__ dICU_ptr = &derivatives[6 * n];
         double* __restrict__ dR_ptr   = &derivatives[7 * n];
         double* __restrict__ dD_ptr   = &derivatives[8 * n];
+        double* __restrict__ dCumH_ptr   = &derivatives[9 * n];
+        double* __restrict__ dCumICU_ptr = &derivatives[10 * n];
 
         // Constant parameters pointers
         const double* __restrict__ N_ptr = N.data();
@@ -162,6 +164,7 @@ namespace epidemic {
             // Original: cached_dI = ... - (gamma_I + h) * I
             // Original R: gamma_A*A + gamma_I*I + ...
             
+            double flow_H_ICU = icu_ptr[i] * H_ptr[i];
             double H_out = (local_gamma_H + dH_ptr_const[i] + icu_ptr[i]) * H_ptr[i];
             double ICU_out = (local_gamma_ICU + dICU_ptr_const[i]) * ICU_ptr[i];
 
@@ -171,10 +174,13 @@ namespace epidemic {
             dA_ptr[i]   = flow_PA - local_gamma_A * A_ptr[i];
             dI_ptr[i]   = flow_PI - I_out;
             dH_ptr[i]   = flow_IH - H_out;
-            dICU_ptr[i] = icu_ptr[i] * H_ptr[i] - ICU_out;
+            dICU_ptr[i] = flow_H_ICU - ICU_out;
             
             dR_ptr[i]   = local_gamma_A * A_ptr[i] + flow_IR + local_gamma_H * H_ptr[i] + local_gamma_ICU * ICU_ptr[i];
             dD_ptr[i]   = dH_ptr_const[i] * H_ptr[i] + dICU_ptr_const[i] * ICU_ptr[i];
+            
+            dCumH_ptr[i]   = flow_IH;
+            dCumICU_ptr[i] = flow_H_ICU;
         }
     }
     
@@ -200,7 +206,7 @@ namespace epidemic {
     
     std::vector<std::string> AgeSEPAIHRDModel::getStateNames() const {        
         std::vector<std::string> names;
-        std::vector<std::string> compartments = {"S", "E", "P", "A", "I", "H", "ICU", "R", "D"};
+        std::vector<std::string> compartments = {"S", "E", "P", "A", "I", "H", "ICU", "R", "D", "CumH", "CumICU"};
         for (const auto& comp : compartments) {
             for (int i = 0; i < num_age_classes; ++i) names.push_back(comp + std::to_string(i));
         }

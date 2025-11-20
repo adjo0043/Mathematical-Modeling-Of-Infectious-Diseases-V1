@@ -132,30 +132,43 @@ double SEPAIHRDGradientObjectiveFunction::evaluate_with_gradient(
         double f_plus = -std::numeric_limits<double>::infinity();
         
         if (result.isValid()) {
-             // E. Calculate Likelihood
+             // E. Calculate Likelihood using Cumulative Variables (Corrected Logic)
              int num_compartments = AgeSEPAIHRDSimulator::NUM_COMPARTMENTS;
-             Eigen::MatrixXd I_data = SimulationResultProcessor::getCompartmentData(result, *thread_model, "I", num_compartments);
-             Eigen::MatrixXd H_data = SimulationResultProcessor::getCompartmentData(result, *thread_model, "H", num_compartments);
+             
+             // Retrieve Cumulative Data
+             Eigen::MatrixXd CumH_data = SimulationResultProcessor::getCompartmentData(result, *thread_model, "CumH", num_compartments);
+             Eigen::MatrixXd CumICU_data = SimulationResultProcessor::getCompartmentData(result, *thread_model, "CumICU", num_compartments);
              Eigen::MatrixXd D_data = SimulationResultProcessor::getCompartmentData(result, *thread_model, "D", num_compartments);
 
-             Eigen::VectorXd h_rates = thread_model->getHospRate(); 
-             Eigen::VectorXd icu_admission_rates = thread_model->getIcuRate(); 
-        
-             Eigen::MatrixXd sim_hosp = (I_data.array().rowwise() * h_rates.transpose().array()).matrix();
-             Eigen::MatrixXd sim_icu = (H_data.array().rowwise() * icu_admission_rates.transpose().array()).matrix();
-             
-             Eigen::MatrixXd sim_deaths;
-             sim_deaths.resize(time_points_.size(), n_ages);
-             sim_deaths.setZero();
-             
+             // Calculate Daily Incidence from Cumulative Data
+             Eigen::MatrixXd sim_hosp(CumH_data.rows(), CumH_data.cols());
+             Eigen::MatrixXd sim_icu(CumICU_data.rows(), CumICU_data.cols());
+             Eigen::MatrixXd sim_deaths(D_data.rows(), D_data.cols());
+
              if (time_points_.size() > 0) {
+                // Row 0: Cum(t0) - Initial_Cum (which is 0 in init_state)
+                sim_hosp.row(0) = CumH_data.row(0);
+                sim_icu.row(0) = CumICU_data.row(0);
                 sim_deaths.row(0) = D_data.row(0) - initial_state_for_run.segment(n_ages * AgeSEPAIHRDSimulator::D_COMPARTMENT_OFFSET, n_ages).transpose();
+
+                // Subsequent rows: Cum(t) - Cum(t-1)
                 if (time_points_.size() > 1) {
+                    sim_hosp.bottomRows(time_points_.size() - 1) = CumH_data.bottomRows(time_points_.size() - 1) - CumH_data.topRows(time_points_.size() - 1);
+                    sim_icu.bottomRows(time_points_.size() - 1) = CumICU_data.bottomRows(time_points_.size() - 1) - CumICU_data.topRows(time_points_.size() - 1);
                     sim_deaths.bottomRows(time_points_.size() - 1) = D_data.bottomRows(time_points_.size() - 1) - D_data.topRows(time_points_.size() - 1);
                 }
+                
+                // Ensure non-negativity
+                sim_hosp = sim_hosp.cwiseMax(0.0);
+                sim_icu = sim_icu.cwiseMax(0.0);
                 sim_deaths = sim_deaths.cwiseMax(0.0);
+             } else {
+                 sim_hosp.setZero();
+                 sim_icu.setZero();
+                 sim_deaths.setZero();
              }
 
+             // Compare against New Daily data (from CSV)
              double ll_hosp = calculateSingleLogLikelihood(sim_hosp, observed_data_.getNewHospitalizations(), "Hospitalizations");
              double ll_icu = calculateSingleLogLikelihood(sim_icu, observed_data_.getNewICU(), "ICU Admissions");
              double ll_deaths = calculateSingleLogLikelihood(sim_deaths, observed_data_.getNewDeaths(), "Deaths");
@@ -163,11 +176,7 @@ double SEPAIHRDGradientObjectiveFunction::evaluate_with_gradient(
              f_plus = ll_hosp + ll_icu + ll_deaths;
              
              if (std::isnan(f_plus) || std::isinf(f_plus)) {
-                 if (ll_hosp <= std::numeric_limits<double>::lowest() / 2.0 ||
-                    ll_icu  <= std::numeric_limits<double>::lowest() / 2.0 ||
-                    ll_deaths <= std::numeric_limits<double>::lowest() / 2.0 ) {
-                     f_plus = std::numeric_limits<double>::lowest();
-                }
+                 f_plus = std::numeric_limits<double>::lowest();
              }
         } else {
             f_plus = std::numeric_limits<double>::lowest();

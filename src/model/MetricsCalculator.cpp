@@ -94,8 +94,7 @@ EssentialMetrics MetricsCalculator::calculateEssentialMetrics(
         Eigen::VectorXd new_infections = lambda_t.array() * S_t.array() * dt;
         
         cumulative_infections += new_infections;
-        cumulative_hosp += (params.h.array() * I_t.array() * dt).matrix();
-        cumulative_icu += (params.icu.array() * H_t.array() * dt).matrix();
+        // cumulative_hosp and cumulative_icu are now calculated from cumulative states after the loop
         
         // Seroprevalence at target day
         if (t == target_idx) {
@@ -107,6 +106,16 @@ EssentialMetrics MetricsCalculator::calculateEssentialMetrics(
     Eigen::Map<const Eigen::VectorXd> D_final(&sim_result.solution.back()[8 * num_age_classes], num_age_classes);
     Eigen::Map<const Eigen::VectorXd> D_initial(&initial_state[8 * num_age_classes], num_age_classes);
     Eigen::VectorXd cumulative_deaths = D_final - D_initial;
+
+    // Calculate cumulative hospitalizations and ICU admissions from states
+    Eigen::Map<const Eigen::VectorXd> CumH_final(&sim_result.solution.back()[9 * num_age_classes], num_age_classes);
+    Eigen::Map<const Eigen::VectorXd> CumICU_final(&sim_result.solution.back()[10 * num_age_classes], num_age_classes);
+    
+    Eigen::Map<const Eigen::VectorXd> CumH_initial(&initial_state[9 * num_age_classes], num_age_classes);
+    Eigen::Map<const Eigen::VectorXd> CumICU_initial(&initial_state[10 * num_age_classes], num_age_classes);
+    
+    cumulative_hosp = CumH_final - CumH_initial;
+    cumulative_icu = CumICU_final - CumICU_initial;
     
     metrics.total_cumulative_deaths = cumulative_deaths.sum();
     metrics.overall_attack_rate = cumulative_infections.sum() / total_population;
