@@ -279,6 +279,15 @@ protected:
             test_params_.p,
             test_params_.h
         );
+
+        // Resize to include cumulative compartments if necessary (9 -> 11 compartments)
+        // The model now expects 11 compartments (including CumH and CumICU), but calibration data might return 9.
+        int expected_size = NUM_AGE_CLASSES * 11;
+        if (initial_state_.size() == NUM_AGE_CLASSES * 9) {
+            Eigen::VectorXd expanded_state = Eigen::VectorXd::Zero(expected_size);
+            expanded_state.head(initial_state_.size()) = initial_state_;
+            initial_state_ = expanded_state;
+        }
     }
 
     /**
