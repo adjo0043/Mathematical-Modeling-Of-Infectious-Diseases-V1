@@ -96,6 +96,18 @@ public:
      */
     virtual double getUpperBoundForParamIndex(int idx) const;
 
+    /**
+     * @brief Get the proposal sigmas map.
+     * @return const reference to the proposal sigmas map.
+     */
+    const std::map<std::string, double>& getProposalSigmas() const { return proposal_sigmas_; }
+
+    /**
+     * @brief Get the parameter bounds map.
+     * @return const reference to the parameter bounds map.
+     */
+    const std::map<std::string, std::pair<double, double>>& getParamBounds() const { return param_bounds_; }
+
 
 private:
     /** @brief Shared pointer to the AgeSEPAIHRDModel instance being managed. */

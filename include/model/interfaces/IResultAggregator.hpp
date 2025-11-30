@@ -54,6 +54,8 @@ public:
      * @param time_points Time points for simulation
      * @param initial_state Initial state vector
      * @param observed_data Observed calibration data
+     * @param model_template Model template for simulation
+     * @param random_seed Optional seed for reproducibility (0 = random)
      * @return Posterior predictive data structure
      */
     virtual PosteriorPredictiveData aggregatePosteriorPredictives(
@@ -65,7 +67,8 @@ public:
         const std::vector<double>& time_points,
         const Eigen::VectorXd& initial_state,
         const CalibrationData& observed_data,
-        std::shared_ptr<AgeSEPAIHRDModel> model_template
+        std::shared_ptr<AgeSEPAIHRDModel> model_template,
+        unsigned int random_seed = 0
     ) const = 0;
     
     /**

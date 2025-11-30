@@ -23,8 +23,9 @@ public:
     // Inherit constructors
     using SEPAIHRDObjectiveFunction::SEPAIHRDObjectiveFunction;
     
-    // Epsilon for finite differences
-    double epsilon_ = 1e-8; 
+    // Epsilon for finite differences - use a larger value for better numerical stability
+    // For relative perturbation: actual_eps = epsilon_ * max(1, |param_value|)
+    double epsilon_ = 1e-4;  // Increased from 1e-8 for better gradient estimates
 
     /**
      * @brief Evaluates the objective function and its gradient in parallel.

@@ -29,21 +29,29 @@ double SEPAIHRDGradientObjectiveFunction::evaluate_with_gradient(
         return f_center;
     }
 
-    const double eps = epsilon_;
-
     // 2. Parallel Gradient Calculation using CLONES
+    // Cast to SEPAIHRDParameterManager to access getProposalSigmas and getParamBounds
+    const auto& sepaihrd_manager = dynamic_cast<const SEPAIHRDParameterManager&>(parameterManager_);
+    
     #pragma omp parallel for
     for (int i = 0; i < n_params; ++i) {
+        // Use relative perturbation: eps_i = epsilon_ * max(|param_i|, epsilon_)
+        // This ensures perturbation is proportional to parameter magnitude
+        double param_scale = std::max(std::abs(params[i]), epsilon_);
+        double eps_i = epsilon_ * param_scale;
+        
         // A. Clone the model for this thread
         auto thread_model = model_->clone();
         
         // B. Create a thread-local ParameterManager for the cloned model
+        // Pass the actual sigmas and bounds from the original parameter manager
         SEPAIHRDParameterManager temp_manager(thread_model, 
-             parameterManager_.getParameterNames(), 
-             {}, {}); // Sigmas/bounds irrelevant for update
+             sepaihrd_manager.getParameterNames(), 
+             sepaihrd_manager.getProposalSigmas(),
+             sepaihrd_manager.getParamBounds());
              
         Eigen::VectorXd params_plus = params;
-        params_plus[i] += eps;
+        params_plus[i] += eps_i;
 
         try {
             temp_manager.updateModelParameters(params_plus);
@@ -53,6 +61,7 @@ double SEPAIHRDGradientObjectiveFunction::evaluate_with_gradient(
         }
 
         // C. Prepare Initial State (Logic from SEPAIHRDObjectiveFunction::calculate)
+        // IMPORTANT: Apply multipliers FIRST, then recalculate S
         Eigen::VectorXd initial_state_for_run = initial_state_;
         int n_ages = thread_model->getNumAgeClasses();
 
@@ -75,7 +84,17 @@ double SEPAIHRDGradientObjectiveFunction::evaluate_with_gradient(
         double r0_mult = get_multiplier("R0_multiplier");
         double d0_mult = get_multiplier("D0_multiplier");
 
-        // Recalculate S
+        // Apply multipliers FIRST (before recalculating S)
+        initial_state_for_run.segment(1 * n_ages, n_ages) *= e0_mult;
+        initial_state_for_run.segment(2 * n_ages, n_ages) *= p0_mult;
+        initial_state_for_run.segment(3 * n_ages, n_ages) *= a0_mult;
+        initial_state_for_run.segment(4 * n_ages, n_ages) *= i0_mult;
+        initial_state_for_run.segment(5 * n_ages, n_ages) *= h0_mult;
+        initial_state_for_run.segment(6 * n_ages, n_ages) *= icu0_mult;
+        initial_state_for_run.segment(7 * n_ages, n_ages) *= r0_mult;
+        initial_state_for_run.segment(8 * n_ages, n_ages) *= d0_mult;
+
+        // Now recalculate S to ensure population conservation
         const Eigen::VectorXd& N = thread_model->getPopulationSizes();
         bool valid_state = true;
         for (int k = 0; k < n_ages; ++k) {
@@ -87,28 +106,6 @@ double SEPAIHRDGradientObjectiveFunction::evaluate_with_gradient(
                 valid_state = false; break;
             }
             initial_state_for_run(k) = N(k) - sum_non_S;
-        }
-
-        if (valid_state) {
-            initial_state_for_run.segment(1 * n_ages, n_ages) *= e0_mult;
-            initial_state_for_run.segment(2 * n_ages, n_ages) *= p0_mult;
-            initial_state_for_run.segment(3 * n_ages, n_ages) *= a0_mult;
-            initial_state_for_run.segment(4 * n_ages, n_ages) *= i0_mult;
-            initial_state_for_run.segment(5 * n_ages, n_ages) *= h0_mult;
-            initial_state_for_run.segment(6 * n_ages, n_ages) *= icu0_mult;
-            initial_state_for_run.segment(7 * n_ages, n_ages) *= r0_mult;
-            initial_state_for_run.segment(8 * n_ages, n_ages) *= d0_mult;
-
-            for (int k = 0; k < n_ages; ++k) {
-                double sum_non_S = 0.0;
-                for (int j = 1; j < constants::NUM_COMPARTMENTS_SEPAIHRD; ++j) {
-                    sum_non_S += initial_state_for_run(j * n_ages + k);
-                }
-                if (sum_non_S > N(k) || sum_non_S < 0) {
-                    valid_state = false; break;
-                }
-                initial_state_for_run(k) = N(k) - sum_non_S;
-            }
         }
 
         if (!valid_state) {
@@ -146,10 +143,11 @@ double SEPAIHRDGradientObjectiveFunction::evaluate_with_gradient(
              Eigen::MatrixXd sim_deaths(D_data.rows(), D_data.cols());
 
              if (time_points_.size() > 0) {
-                // Row 0: Cum(t0) - Initial_Cum (which is 0 in init_state)
-                sim_hosp.row(0) = CumH_data.row(0);
-                sim_icu.row(0) = CumICU_data.row(0);
-                sim_deaths.row(0) = D_data.row(0) - initial_state_for_run.segment(n_ages * AgeSEPAIHRDSimulator::D_COMPARTMENT_OFFSET, n_ages).transpose();
+                // Row 0: Cum(t0) - Initial_Cum
+                // CumH is at compartment index 9, CumICU at index 10, D at index 8
+                sim_hosp.row(0) = CumH_data.row(0) - initial_state_for_run.segment(n_ages * 9, n_ages).transpose();
+                sim_icu.row(0) = CumICU_data.row(0) - initial_state_for_run.segment(n_ages * 10, n_ages).transpose();
+                sim_deaths.row(0) = D_data.row(0) - initial_state_for_run.segment(n_ages * 8, n_ages).transpose();
 
                 // Subsequent rows: Cum(t) - Cum(t-1)
                 if (time_points_.size() > 1) {
@@ -183,7 +181,7 @@ double SEPAIHRDGradientObjectiveFunction::evaluate_with_gradient(
         }
 
         if (std::isfinite(f_plus)) {
-            grad[i] = (f_plus - f_center) / eps;
+            grad[i] = (f_plus - f_center) / eps_i;
         } else {
             grad[i] = 0.0;
         }

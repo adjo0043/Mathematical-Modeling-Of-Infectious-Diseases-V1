@@ -80,14 +80,38 @@ double SEPAIHRDObjectiveFunction::calculate(const Eigen::VectorXd& parameters) c
     
     SEPAIHRDParameters current_model_params = local_model->getModelParameters();
     
-    init_state.segment(1*n_ages, n_ages) *= current_model_params.E0_multiplier;
-    init_state.segment(2*n_ages, n_ages) *= current_model_params.P0_multiplier;
-    init_state.segment(3*n_ages, n_ages) *= current_model_params.A0_multiplier;
-    init_state.segment(4*n_ages, n_ages) *= current_model_params.I0_multiplier;
-    init_state.segment(5*n_ages, n_ages) *= current_model_params.H0_multiplier;
-    init_state.segment(6*n_ages, n_ages) *= current_model_params.ICU0_multiplier;
-    init_state.segment(7*n_ages, n_ages) *= current_model_params.R0_multiplier;
-    init_state.segment(8*n_ages, n_ages) *= current_model_params.D0_multiplier;
+    // Check if we're using run-up strategy (runup_days > 0)
+    double runup_days = current_model_params.runup_days;
+    double seed_exposed = current_model_params.seed_exposed;
+    
+    if (runup_days > 0 && seed_exposed > 0) {
+        // Run-up strategy: seed E compartment, zero out others
+        const Eigen::VectorXd& N = local_model->getPopulationSizes();
+        double total_pop = N.sum();
+        for (int i = 0; i < n_ages; ++i) {
+            double age_fraction = N(i) / total_pop;
+            init_state(i + n_ages) = seed_exposed * age_fraction;  // E compartment
+            init_state(i + 2*n_ages) = 0.0;  // P
+            init_state(i + 3*n_ages) = 0.0;  // A
+            init_state(i + 4*n_ages) = 0.0;  // I
+            init_state(i + 5*n_ages) = 0.0;  // H
+            init_state(i + 6*n_ages) = 0.0;  // ICU
+            init_state(i + 7*n_ages) = 0.0;  // R
+            init_state(i + 8*n_ages) = 0.0;  // D
+            init_state(i + 9*n_ages) = 0.0;  // CumH
+            init_state(i + 10*n_ages) = 0.0; // CumICU
+        }
+    } else {
+        // Original behavior: apply multipliers
+        init_state.segment(1*n_ages, n_ages) *= current_model_params.E0_multiplier;
+        init_state.segment(2*n_ages, n_ages) *= current_model_params.P0_multiplier;
+        init_state.segment(3*n_ages, n_ages) *= current_model_params.A0_multiplier;
+        init_state.segment(4*n_ages, n_ages) *= current_model_params.I0_multiplier;
+        init_state.segment(5*n_ages, n_ages) *= current_model_params.H0_multiplier;
+        init_state.segment(6*n_ages, n_ages) *= current_model_params.ICU0_multiplier;
+        init_state.segment(7*n_ages, n_ages) *= current_model_params.R0_multiplier;
+        init_state.segment(8*n_ages, n_ages) *= current_model_params.D0_multiplier;
+    }
 
     const Eigen::VectorXd& N = local_model->getPopulationSizes();
     for (int i = 0; i < n_ages; ++i) {
@@ -112,40 +136,64 @@ double SEPAIHRDObjectiveFunction::calculate(const Eigen::VectorXd& parameters) c
     Eigen::MatrixXd CumH_data = SimulationResultProcessor::getCompartmentData(res, *local_model, "CumH", nc);
     Eigen::MatrixXd CumICU_data = SimulationResultProcessor::getCompartmentData(res, *local_model, "CumICU", nc);
 
+    // === RUN-UP STRATEGY: Slice results to discard t < 0 ===
+    // Find the index where t >= 0 (the first observation time)
+    int runup_offset = 0;
+    for (size_t i = 0; i < time_points_.size(); ++i) {
+        if (time_points_[i] >= 0.0) {
+            runup_offset = static_cast<int>(i);
+            break;
+        }
+    }
+    
+    // Number of observation points (t >= 0)
+    int num_obs_points = static_cast<int>(time_points_.size()) - runup_offset;
+    
+    // Validate dimensions match observed data
+    if (num_obs_points != observed_data_.getNewDeaths().rows()) {
+        return std::numeric_limits<double>::lowest();
+    }
+
     // Calculate Derived Metrics (Daily Incidence from Cumulative States)
-    Eigen::MatrixXd local_sim_hosp(CumH_data.rows(), CumH_data.cols());
-    Eigen::MatrixXd local_sim_icu(CumICU_data.rows(), CumICU_data.cols());
+    // Work with full simulation data first, then slice
+    Eigen::MatrixXd full_sim_hosp(CumH_data.rows(), CumH_data.cols());
+    Eigen::MatrixXd full_sim_icu(CumICU_data.rows(), CumICU_data.cols());
     
     if (!time_points_.empty()) {
-        // First row: Cum(t0) - Cum_initial
-        local_sim_hosp.row(0) = CumH_data.row(0) - init_state.segment(n_ages * 9, n_ages).transpose();
-        local_sim_icu.row(0) = CumICU_data.row(0) - init_state.segment(n_ages * 10, n_ages).transpose();
+        // First row: Cum(t0) - Cum_initial (where t0 is -runup_days)
+        full_sim_hosp.row(0) = CumH_data.row(0) - init_state.segment(n_ages * 9, n_ages).transpose();
+        full_sim_icu.row(0) = CumICU_data.row(0) - init_state.segment(n_ages * 10, n_ages).transpose();
         
         // Subsequent rows: Cum(t) - Cum(t-1)
         if (time_points_.size() > 1) {
-             local_sim_hosp.bottomRows(time_points_.size()-1) = CumH_data.bottomRows(time_points_.size()-1) - CumH_data.topRows(time_points_.size()-1);
-             local_sim_icu.bottomRows(time_points_.size()-1) = CumICU_data.bottomRows(time_points_.size()-1) - CumICU_data.topRows(time_points_.size()-1);
+             full_sim_hosp.bottomRows(time_points_.size()-1) = CumH_data.bottomRows(time_points_.size()-1) - CumH_data.topRows(time_points_.size()-1);
+             full_sim_icu.bottomRows(time_points_.size()-1) = CumICU_data.bottomRows(time_points_.size()-1) - CumICU_data.topRows(time_points_.size()-1);
         }
         
         // Ensure non-negative
-        local_sim_hosp = local_sim_hosp.cwiseMax(0.0);
-        local_sim_icu = local_sim_icu.cwiseMax(0.0);
+        full_sim_hosp = full_sim_hosp.cwiseMax(0.0);
+        full_sim_icu = full_sim_icu.cwiseMax(0.0);
     } else {
-        local_sim_hosp.setZero(CumH_data.rows(), CumH_data.cols());
-        local_sim_icu.setZero(CumICU_data.rows(), CumICU_data.cols());
+        full_sim_hosp.setZero(CumH_data.rows(), CumH_data.cols());
+        full_sim_icu.setZero(CumICU_data.rows(), CumICU_data.cols());
     }
     
-    Eigen::MatrixXd local_sim_deaths;
+    Eigen::MatrixXd full_sim_deaths;
     if (!time_points_.empty()) {
-        local_sim_deaths.resize(D_data.rows(), D_data.cols());
-        local_sim_deaths.row(0) = D_data.row(0) - init_state.segment(n_ages * 8, n_ages).transpose();
+        full_sim_deaths.resize(D_data.rows(), D_data.cols());
+        full_sim_deaths.row(0) = D_data.row(0) - init_state.segment(n_ages * 8, n_ages).transpose();
         if (time_points_.size() > 1) {
-             local_sim_deaths.bottomRows(time_points_.size()-1) = D_data.bottomRows(time_points_.size()-1) - D_data.topRows(time_points_.size()-1);
+             full_sim_deaths.bottomRows(time_points_.size()-1) = D_data.bottomRows(time_points_.size()-1) - D_data.topRows(time_points_.size()-1);
         }
-        local_sim_deaths = local_sim_deaths.cwiseMax(0.0);
+        full_sim_deaths = full_sim_deaths.cwiseMax(0.0);
     } else {
-        local_sim_deaths.setZero(D_data.rows(), D_data.cols());
+        full_sim_deaths.setZero(D_data.rows(), D_data.cols());
     }
+
+    // Slice to get only t >= 0 data for likelihood calculation
+    Eigen::MatrixXd local_sim_hosp = full_sim_hosp.bottomRows(num_obs_points);
+    Eigen::MatrixXd local_sim_icu = full_sim_icu.bottomRows(num_obs_points);
+    Eigen::MatrixXd local_sim_deaths = full_sim_deaths.bottomRows(num_obs_points);
 
     // 6. Calculate Likelihood (Parallelized)
     auto f_hosp = std::async(std::launch::async, [&]{ 

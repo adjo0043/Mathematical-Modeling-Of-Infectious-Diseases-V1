@@ -83,6 +83,9 @@ namespace epidemic {
         /** @brief Age-specific mortality rate in ICU */
         Eigen::VectorXd d_ICU;
         
+        /** @brief Age-specific community/nursing home mortality rate (direct I->D) */
+        Eigen::VectorXd d_community;
+        
         /** @brief Strategy defining NPI effects on contact rates */
         std::shared_ptr<INpiStrategy> npi_strategy;
 
@@ -125,6 +128,12 @@ namespace epidemic {
         double ICU0_multiplier = 1.0;
         double R0_multiplier = 1.0;
         double D0_multiplier = 1.0;
+        
+        /** @brief Number of days before t=0 to start the simulation (run-up period) */
+        double runup_days = 30.0;
+        
+        /** @brief Total number of exposed individuals to seed at t=-runup_days */
+        double seed_exposed = 10.0;
 
         // --- Private helper methods ---
         /**
@@ -268,6 +277,8 @@ namespace epidemic {
         const Eigen::VectorXd& getMortalityRateH() const;   
         /** @brief Returns the age-specific mortality rate in ICU (d_ICU) */
         const Eigen::VectorXd& getMortalityRateICU() const; 
+        /** @brief Returns the age-specific community mortality rate (d_community) */
+        const Eigen::VectorXd& getCommunityMortalityRate() const; 
     
         /**
          * @brief Sets a new transmission rate (beta). Thread-safe.

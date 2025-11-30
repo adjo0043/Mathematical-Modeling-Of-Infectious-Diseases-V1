@@ -189,6 +189,13 @@ protected:
         test_params_.R0_multiplier = 1.0;
         test_params_.D0_multiplier = 1.0;
         
+        // Run-up strategy disabled for tests (backward compatibility)
+        test_params_.runup_days = 0.0;
+        test_params_.seed_exposed = 0.0;
+        
+        // Community mortality (nursing home bypass) - disabled for tests
+        test_params_.d_community = Eigen::VectorXd::Zero(NUM_AGE_CLASSES);
+        
         // NPI parameters (will be overridden by strategy)
         test_params_.kappa_end_times = {13.0, 63.0, 111.0, 305.0};
         test_params_.kappa_values = {1.0, 0.5, 0.7, 0.9};
@@ -280,14 +287,10 @@ protected:
             test_params_.h
         );
 
-        // Resize to include cumulative compartments if necessary (9 -> 11 compartments)
-        // The model now expects 11 compartments (including CumH and CumICU), but calibration data might return 9.
+        // getInitialSEPAIHRDState now returns 11 compartments including CumH and CumICU
         int expected_size = NUM_AGE_CLASSES * 11;
-        if (initial_state_.size() == NUM_AGE_CLASSES * 9) {
-            Eigen::VectorXd expanded_state = Eigen::VectorXd::Zero(expected_size);
-            expanded_state.head(initial_state_.size()) = initial_state_;
-            initial_state_ = expanded_state;
-        }
+        ASSERT_EQ(initial_state_.size(), expected_size) 
+            << "Initial state should have 11 compartments per age class";
     }
 
     /**

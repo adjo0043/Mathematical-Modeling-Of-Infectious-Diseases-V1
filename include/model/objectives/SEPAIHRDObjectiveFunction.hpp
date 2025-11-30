@@ -150,9 +150,6 @@ namespace epidemic {
         /** @brief Pre-allocated mutable matrix for storing simulated deaths. */
         mutable Eigen::MatrixXd simulated_deaths_;
 
-        /** @brief Mutex to protect mutable state during parallel gradient calculations. */
-        mutable std::mutex calculation_mutex_;
-
         /** @brief Preallocates internal matrices based on model and time points. */
         void preallocateInternalMatrices() const;
     
@@ -163,6 +160,8 @@ namespace epidemic {
          */
         void ensureSimulatorExists() const;
 
+        // Note: Thread safety is achieved by cloning the model in calculate(),
+        // so no mutex is needed for parallel gradient calculations.
     };
     
 } // namespace epidemic

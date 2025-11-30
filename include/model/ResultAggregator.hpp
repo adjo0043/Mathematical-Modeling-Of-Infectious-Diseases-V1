@@ -39,7 +39,8 @@ public:
         const std::vector<double>& time_points,
         const Eigen::VectorXd& initial_state,
         const CalibrationData& observed_data,
-        std::shared_ptr<AgeSEPAIHRDModel> model_template
+        std::shared_ptr<AgeSEPAIHRDModel> model_template,
+        unsigned int random_seed = 0
     ) const override;
     
     void aggregateTrajectoryFiles(

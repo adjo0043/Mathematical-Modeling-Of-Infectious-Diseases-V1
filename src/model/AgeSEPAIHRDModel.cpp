@@ -18,8 +18,13 @@ namespace epidemic {
           beta(params.beta), beta_end_times_(params.beta_end_times), beta_values_(params.beta_values), a(params.a), h_infec(params.h_infec), theta(params.theta),
           sigma(params.sigma), gamma_p(params.gamma_p), gamma_A(params.gamma_A), gamma_I(params.gamma_I),
           gamma_H(params.gamma_H), gamma_ICU(params.gamma_ICU), p(params.p), h(params.h), icu(params.icu),
-          d_H(params.d_H), d_ICU(params.d_ICU),
-          npi_strategy(npi_strategy_ptr), baseline_beta(params.beta), baseline_theta(params.theta), E0_multiplier(params.E0_multiplier), P0_multiplier(params.P0_multiplier), A0_multiplier(params.A0_multiplier), I0_multiplier(params.I0_multiplier), H0_multiplier(params.H0_multiplier), ICU0_multiplier(params.ICU0_multiplier), R0_multiplier(params.R0_multiplier), D0_multiplier(params.D0_multiplier) {
+          d_H(params.d_H), d_ICU(params.d_ICU), d_community(params.d_community.size() > 0 ? params.d_community : Eigen::VectorXd::Zero(params.N.size())),
+          npi_strategy(npi_strategy_ptr), baseline_beta(params.beta), baseline_theta(params.theta),
+          E0_multiplier(params.E0_multiplier), P0_multiplier(params.P0_multiplier),
+          A0_multiplier(params.A0_multiplier), I0_multiplier(params.I0_multiplier),
+          H0_multiplier(params.H0_multiplier), ICU0_multiplier(params.ICU0_multiplier),
+          R0_multiplier(params.R0_multiplier), D0_multiplier(params.D0_multiplier),
+          runup_days(params.runup_days), seed_exposed(params.seed_exposed) {
     
         if (!params.validate()) THROW_INVALID_PARAM("AgeSEPAIHRDModel::constructor", "Invalid SEPAIHRD parameters.");
         if (!npi_strategy) THROW_INVALID_PARAM("AgeSEPAIHRDModel::constructor", "NPI strategy pointer cannot be null.");
@@ -49,12 +54,13 @@ namespace epidemic {
           a(other.a), h_infec(other.h_infec), theta(other.theta), sigma(other.sigma),
           gamma_p(other.gamma_p), gamma_A(other.gamma_A), gamma_I(other.gamma_I),
           gamma_H(other.gamma_H), gamma_ICU(other.gamma_ICU), p(other.p), h(other.h),
-          icu(other.icu), d_H(other.d_H), d_ICU(other.d_ICU),
+          icu(other.icu), d_H(other.d_H), d_ICU(other.d_ICU), d_community(other.d_community),
           baseline_beta(other.baseline_beta), baseline_theta(other.baseline_theta),
           E0_multiplier(other.E0_multiplier), P0_multiplier(other.P0_multiplier),
           A0_multiplier(other.A0_multiplier), I0_multiplier(other.I0_multiplier),
           H0_multiplier(other.H0_multiplier), ICU0_multiplier(other.ICU0_multiplier),
-          R0_multiplier(other.R0_multiplier), D0_multiplier(other.D0_multiplier) 
+          R0_multiplier(other.R0_multiplier), D0_multiplier(other.D0_multiplier),
+          runup_days(other.runup_days), seed_exposed(other.seed_exposed) 
     {
         if (other.npi_strategy) this->npi_strategy = other.npi_strategy->clone();
         if (other.beta_strategy_) this->beta_strategy_ = std::make_unique<PiecewiseConstantParameterStrategy>(*other.beta_strategy_);
@@ -106,6 +112,7 @@ namespace epidemic {
         const double* __restrict__ icu_ptr = icu.data();
         const double* __restrict__ dH_ptr_const = d_H.data();
         const double* __restrict__ dICU_ptr_const = d_ICU.data();
+        const double* __restrict__ d_comm_ptr = d_community.data();
 
         // --- 2. CALCULATE INFECTIOUS PRESSURE ---
         double* __restrict__ inf_pressure_ptr = cached_infectious_pressure.data();
@@ -158,9 +165,11 @@ namespace epidemic {
             double flow_PA = p_ptr[i] * flow_P_out;
             double flow_PI = (1.0 - p_ptr[i]) * flow_P_out;
             
-            double I_out = (local_gamma_I + h_ptr[i]) * I_ptr[i];
+            // Nursing home bypass: add d_community outflow from I
+            double I_out = (local_gamma_I + h_ptr[i] + d_comm_ptr[i]) * I_ptr[i];
             double flow_IH = h_ptr[i] * I_ptr[i];
             double flow_IR = local_gamma_I * I_ptr[i]; 
+            double flow_ID_community = d_comm_ptr[i] * I_ptr[i];  // Direct I->D (nursing home deaths)
             // Original: cached_dI = ... - (gamma_I + h) * I
             // Original R: gamma_A*A + gamma_I*I + ...
             
@@ -177,7 +186,8 @@ namespace epidemic {
             dICU_ptr[i] = flow_H_ICU - ICU_out;
             
             dR_ptr[i]   = local_gamma_A * A_ptr[i] + flow_IR + local_gamma_H * H_ptr[i] + local_gamma_ICU * ICU_ptr[i];
-            dD_ptr[i]   = dH_ptr_const[i] * H_ptr[i] + dICU_ptr_const[i] * ICU_ptr[i];
+            // Add nursing home bypass deaths to dD
+            dD_ptr[i]   = dH_ptr_const[i] * H_ptr[i] + dICU_ptr_const[i] * ICU_ptr[i] + flow_ID_community;
             
             dCumH_ptr[i]   = flow_IH;
             dCumICU_ptr[i] = flow_H_ICU;
@@ -231,6 +241,7 @@ namespace epidemic {
     const Eigen::VectorXd& AgeSEPAIHRDModel::getIcuRate() const { return icu; }
     const Eigen::VectorXd& AgeSEPAIHRDModel::getMortalityRateH() const { return d_H; }
     const Eigen::VectorXd& AgeSEPAIHRDModel::getMortalityRateICU() const { return d_ICU; }
+    const Eigen::VectorXd& AgeSEPAIHRDModel::getCommunityMortalityRate() const { return d_community; }
 
     void AgeSEPAIHRDModel::setTransmissionRate(double new_beta) {
         if (new_beta < 0.0) THROW_INVALID_PARAM("setTransmissionRate", "Negative beta.");
@@ -252,6 +263,7 @@ namespace epidemic {
         p_struct.sigma = sigma; p_struct.gamma_p = gamma_p; p_struct.gamma_A = gamma_A;
         p_struct.gamma_I = gamma_I; p_struct.gamma_H = gamma_H; p_struct.gamma_ICU = gamma_ICU;
         p_struct.p = p; p_struct.h = h; p_struct.icu = icu; p_struct.d_H = d_H; p_struct.d_ICU = d_ICU;
+        p_struct.d_community = d_community;
         p_struct.beta_end_times = beta_end_times_; p_struct.beta_values = beta_values_;
         
         p_struct.E0_multiplier = E0_multiplier;
@@ -262,6 +274,10 @@ namespace epidemic {
         p_struct.ICU0_multiplier = ICU0_multiplier;
         p_struct.R0_multiplier = R0_multiplier;
         p_struct.D0_multiplier = D0_multiplier;
+        
+        // Run-up strategy parameters
+        p_struct.runup_days = runup_days;
+        p_struct.seed_exposed = seed_exposed;
 
         if(this->npi_strategy){
             p_struct.kappa_end_times.push_back(this->npi_strategy->getBaselinePeriodEndTime());
@@ -279,11 +295,13 @@ namespace epidemic {
         gamma_p = params.gamma_p; gamma_A = params.gamma_A; gamma_I = params.gamma_I;
         gamma_H = params.gamma_H; gamma_ICU = params.gamma_ICU;
         p = params.p; h = params.h; icu = params.icu; d_H = params.d_H; d_ICU = params.d_ICU;
+        d_community = params.d_community.size() > 0 ? params.d_community : Eigen::VectorXd::Zero(num_age_classes);
         
         E0_multiplier = params.E0_multiplier; P0_multiplier = params.P0_multiplier;
         A0_multiplier = params.A0_multiplier; I0_multiplier = params.I0_multiplier;
         H0_multiplier = params.H0_multiplier; ICU0_multiplier = params.ICU0_multiplier;
         R0_multiplier = params.R0_multiplier; D0_multiplier = params.D0_multiplier;
+        runup_days = params.runup_days; seed_exposed = params.seed_exposed;
 
         baseline_beta = params.beta; baseline_theta = params.theta;
         beta_end_times_ = params.beta_end_times; beta_values_ = params.beta_values;

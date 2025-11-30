@@ -1,73 +1,67 @@
-# SEPAIHRD Model Parameters INITIAL GUESS for Spain (Mar-Dec 2020)
+# SEPAIHRD Model Parameters INITIAL GUESS - CALIBRATED
+# Calibration completed: 2025-11-30 19:54:28
+# Best objective function value: 1.41969205e+06
 
-# Times correspond to: Lockdown(Mar14), De-escalation(May2), Phase1/2(May23), NewNormality(Jun19), EndSummer(Aug30), 2ndWave(Oct23), EndYear
+# --- Timing (Days since March 1st) ---
 beta_end_times  13.0 63.0 84.0 111.0 183.0 237.0 305.0
 kappa_end_times 13.0 63.0 84.0 111.0 183.0 237.0 305.0
 
-# Beta trajectory: High initial -> Low (Lockdown) -> Rising (Summer) -> Dip (2nd Wave measures)
-beta_1 0.85000000e+00
-beta_2 0.15000000e+00
-beta_3 0.18000000e+00
-beta_4 0.22000000e+00
-beta_5 0.35000000e+00
-beta_6 0.45000000e+00
-beta_7 0.30000000e+00
+# --- Beta Trajectory ---
+beta_1 4.62524776e-01
+beta_2 2.95999272e-01
+beta_3 9.24875113e-02
+beta_4 5.92179890e-01
+beta_5 2.59946418e-01
+beta_6 7.03679284e-01
+beta_7 5.70839916e-01
 
-# Kappas (Mobility/Contact reductions): 1.0 = Baseline
-kappa_1 1.00
-kappa_2 0.30000000e+00
-kappa_3 0.40000000e+00
-kappa_4 0.60000000e+00
-kappa_5 0.80000000e+00
-kappa_6 0.90000000e+00
-kappa_7 0.75000000e+00
+# --- NPI Scaling (Kappa) ---
+kappa_1 1.00000000e+00
+kappa_2 2.00000000e-01
+kappa_3 3.91774139e-01
+kappa_4 2.18155752e-01
+kappa_5 6.27138468e-01
+kappa_6 2.00000000e-01
+kappa_7 2.07646978e-01
 
-# --- Other Disease Transmission Parameters ---
-beta      0.85000000e+00   # Fallback
-theta     0.50000000e+00   # Reduced infectiousness of symptomatic (often 0.5)
+# --- Age-Specific Parameters ---
+# Susceptibility
+a         5.12364660e-01 8.84853325e-01 8.18661005e-01 1.26965912e+00
+# Fraction Asymptomatic
+p         6.00000000e-01 3.00000000e-01 1.14831498e-01 1.00000000e-02
+# Hospitalization Rate (h)
+h         1.00000000e-02 3.86022462e-02 1.50000000e-01 3.00000000e-01
+# ICU Rate (icu)
+icu       2.19928041e-02 3.50000000e-02 6.00000000e-02 1.20928919e-02
+# Mortality in Hospital (d_H)
+d_H       0.00000000e+00 0.00000000e+00 1.00000000e-01 4.00000000e-01
+# Mortality in ICU (d_ICU)
+d_ICU     1.13455929e-02 5.00000000e-02 2.00000000e-01 4.00000000e-01
 
-# --- Disease Progression Rates (1/Days) ---
-sigma     1.92307692e-01   # 5.2 days latent period (Li et al. 2020)
-gamma_p   5.00000000e-01   # 2 days presymptomatic
-gamma_A   2.00000000e-01   # 5 days recovery (Asymptomatic)
-gamma_I   1.42857143e-01   # 7 days recovery (Symptomatic)
-gamma_H   1.11111111e-01   # 9 days hospital stay (Spain median, Ramos-Rincon et al.)
-gamma_ICU 0.06666666e-00   # 15 days ICU stay
+# --- Disease Progression Rates ---
+sigma     3.00000000e-01
+gamma_p   5.00000000e-01
+gamma_A   2.50000000e-01
+gamma_I   2.44011691e-01
+gamma_H   2.00000000e-01
+gamma_ICU 1.00000000e-01
 
-# --- Age-Specific: Susceptibility (a) ---
-# Lower for children, higher for elderly
-a         0.40 0.80 0.90 1.00
+# --- Other Parameters ---
+theta     2.00000000e-01
+h_infec   8.00000000e-01 8.17481058e-01 8.10044139e-01 9.52861707e-01
 
-# --- Age-Specific: Relative Infectiousness (h_infec) ---
-# Often assumed constant or slightly lower for children
-h_infec   0.70 1.00 1.00 1.00
+# --- Initial State & Run-Up ---
+E0_multiplier   2.17320450e+00
+P0_multiplier   8.02291318e-01
+A0_multiplier   9.70561739e-01
+I0_multiplier   1.93324179e+00
+H0_multiplier   1.23839302e+00
+ICU0_multiplier 9.71847211e-01
+R0_multiplier   2.81038395e-01
+D0_multiplier   9.72696071e-01
 
-# --- Age-Specific: Fraction Asymptomatic (p) ---
-# Higher in young (0.7-0.8), Low in elderly (0.2)
-p         0.75 0.45 0.25 0.20
+seed_exposed 5.00000000e+01
+runup_days   2.05541965e+01
 
-# --- Age-Specific: Hospitalization Rate (h) ---
-# Given infection: Very low for G0, rises sharply
-h         0.002 0.040 0.120 0.200
-
-# --- Age-Specific: ICU Rate (icu) ---
-# Given hospitalization: Highest in G1/G2, lower in G3 (frailty/triage)
-icu       0.050 0.150 0.250 0.050
-
-# --- Age-Specific: Mortality in Hospital (d_H) ---
-# Based on Spanish cohort (Ramos-Rincon et al. 2020 data)
-d_H       0.008 0.030 0.135 0.300
-
-# --- Age-Specific: Mortality in ICU (d_ICU) ---
-# High mortality in ICU, especially for elderly
-d_ICU     0.100 0.200 0.400 0.600
-
-# --- Initial State Multipliers ---
-E0_multiplier 1.2
-P0_multiplier 1.2
-A0_multiplier 1.2
-I0_multiplier 1.2
-H0_multiplier 1.0
-ICU0_multiplier 1.0
-R0_multiplier 1.0
-D0_multiplier 1.0
+# Direct nursing home deaths
+d_community 7.74166081e-05 0.00000000e+00 0.00000000e+00 0.00000000e+00

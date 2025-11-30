@@ -223,6 +223,27 @@ OptimizationResult ParticleSwarmOptimization::optimize(
     OptimizationResult result;
     result.bestParameters = gbest_position;
     result.bestObjectiveValue = gbest_value;
+    
+    // Estimate covariance from final swarm for Phase 2 transfer
+    // This provides correlation structure learned from particle distribution
+    Eigen::VectorXd mean_position = Eigen::VectorXd::Zero(n);
+    for (const auto& p : swarm) {
+        mean_position += p.pbest_position;
+    }
+    mean_position /= swarm_size_;
+    
+    result.finalCovariance = Eigen::MatrixXd::Zero(n, n);
+    for (const auto& p : swarm) {
+        Eigen::VectorXd diff = p.pbest_position - mean_position;
+        result.finalCovariance += diff * diff.transpose();
+    }
+    result.finalCovariance /= (swarm_size_ - 1);  // Unbiased estimator
+    
+    // Add small regularization for numerical stability
+    result.finalCovariance += 1e-6 * Eigen::MatrixXd::Identity(n, n);
+    
+    logger.info(logger_source_id_, "Estimated covariance from swarm for Phase 2 transfer.");
+    
     return result;
 }
 
@@ -970,7 +991,14 @@ double ParticleSwarmOptimization::generateLevyNumber(std::mt19937& rng) {
     // Avoid division by very small numbers
     v = std::max(v, 1e-10);
     
-    return u / std::pow(v, 1.0 / levy_alpha_);
+    double levy_step = u / std::pow(v, 1.0 / levy_alpha_);
+    
+    // Clamp the Lévy step to prevent explosive step sizes
+    // Typical values should be within a reasonable range (e.g., [-100, 100])
+    const double max_levy_magnitude = 100.0;
+    levy_step = std::clamp(levy_step, -max_levy_magnitude, max_levy_magnitude);
+    
+    return levy_step;
 }
 
 Eigen::VectorXd ParticleSwarmOptimization::calculateMeanBestPosition(

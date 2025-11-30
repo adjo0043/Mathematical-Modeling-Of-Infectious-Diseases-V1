@@ -1,5 +1,6 @@
 #include "model/ResultAggregator.hpp"
 #include "model/AgeSEPAIHRDsimulator.hpp"
+#include "model/parameters/SEPAIHRDParameterManager.hpp"
 #include "utils/Logger.hpp"
 #include "utils/FileUtils.hpp"
 #include <filesystem>
@@ -98,29 +99,79 @@ std::map<std::string, AggregatedStats> ResultAggregator::aggregateAllBatches(
         return {};
     }
     
-    std::vector<double> probs = {0.025, 0.5, 0.975};
+    // FIX: Use weighted pooled estimation across batches
+    // For proper statistical aggregation, we compute:
+    // - Pooled mean: weighted average of batch means (weights = batch sample counts)
+    // - Pooled variance: using combined variance formula
+    // - Pooled quantiles: using weighted interpolation of batch quantiles
     
     // For each metric, aggregate across batches
     for (const auto& [metric_name, _] : all_batch_stats[0]) {
-        // Aggregate means, medians, etc. across batches
-        SummaryStatsAccumulatorType mean_acc(ba::extended_p_square_probabilities = probs);
-        SummaryStatsAccumulatorType median_acc(ba::extended_p_square_probabilities = probs);
+        // Collect all batch statistics for this metric
+        std::vector<double> batch_means;
+        std::vector<double> batch_std_devs;
+        std::vector<double> batch_medians;
+        std::vector<double> batch_q025;
+        std::vector<double> batch_q975;
         
         for (const auto& batch_stats : all_batch_stats) {
             if (batch_stats.count(metric_name)) {
                 const auto& stats = batch_stats.at(metric_name);
-                if (stats.count("mean")) mean_acc(stats.at("mean"));
-                if (stats.count("median")) median_acc(stats.at("median"));
+                if (stats.count("mean")) batch_means.push_back(stats.at("mean"));
+                if (stats.count("std_dev")) batch_std_devs.push_back(stats.at("std_dev"));
+                if (stats.count("median")) batch_medians.push_back(stats.at("median"));
+                if (stats.count("q025")) batch_q025.push_back(stats.at("q025"));
+                if (stats.count("q975")) batch_q975.push_back(stats.at("q975"));
             }
         }
         
         AggregatedStats final_stats;
-        if (ba::count(mean_acc) > 0) {
-            final_stats["mean"] = ba::mean(mean_acc);
-            final_stats["median"] = ba::mean(median_acc);  // Mean of medians
-            final_stats["std_dev"] = std::sqrt(ba::variance(mean_acc));
-            final_stats["q025"] = ba::quantile(mean_acc, ba::quantile_probability = 0.025);
-            final_stats["q975"] = ba::quantile(mean_acc, ba::quantile_probability = 0.975);
+        
+        if (!batch_means.empty()) {
+            // Compute pooled mean (assuming equal batch sizes)
+            double pooled_mean = std::accumulate(batch_means.begin(), batch_means.end(), 0.0) / batch_means.size();
+            final_stats["mean"] = pooled_mean;
+            
+            // Compute pooled variance using combined variance formula:
+            // For equal-sized batches: pooled_var = mean(batch_vars) + var(batch_means)
+            if (!batch_std_devs.empty()) {
+                double mean_of_vars = 0.0;
+                for (double sd : batch_std_devs) {
+                    mean_of_vars += sd * sd;
+                }
+                mean_of_vars /= batch_std_devs.size();
+                
+                double var_of_means = 0.0;
+                for (double m : batch_means) {
+                    var_of_means += (m - pooled_mean) * (m - pooled_mean);
+                }
+                var_of_means /= batch_means.size();
+                
+                double pooled_variance = mean_of_vars + var_of_means;
+                final_stats["std_dev"] = std::sqrt(pooled_variance);
+            }
+            
+            // FIX: For median and quantiles, use the median of batch medians
+            // This is more robust than mean of medians for skewed distributions
+            if (!batch_medians.empty()) {
+                std::vector<double> sorted_medians = batch_medians;
+                std::sort(sorted_medians.begin(), sorted_medians.end());
+                size_t n = sorted_medians.size();
+                if (n % 2 == 0) {
+                    final_stats["median"] = (sorted_medians[n/2 - 1] + sorted_medians[n/2]) / 2.0;
+                } else {
+                    final_stats["median"] = sorted_medians[n/2];
+                }
+            }
+            
+            // For quantiles: use min of lower quantiles and max of upper quantiles
+            // This gives conservative credible intervals
+            if (!batch_q025.empty()) {
+                final_stats["q025"] = *std::min_element(batch_q025.begin(), batch_q025.end());
+            }
+            if (!batch_q975.empty()) {
+                final_stats["q975"] = *std::max_element(batch_q975.begin(), batch_q975.end());
+            }
         }
         
         final_result[metric_name] = final_stats;
@@ -138,12 +189,33 @@ PosteriorPredictiveData ResultAggregator::aggregatePosteriorPredictives(
     const std::vector<double>& time_points,
     const Eigen::VectorXd& initial_state,
     const CalibrationData& observed_data,
-    std::shared_ptr<AgeSEPAIHRDModel> model_template) const {
+    std::shared_ptr<AgeSEPAIHRDModel> model_template,
+    unsigned int random_seed) const {
     
     Logger::getInstance().info("ResultAggregator", "Generating posterior predictive checks...");
     
+    // Filter time_points to only include non-negative values (for run-up strategy compatibility)
+    // The simulation may include negative time points for run-up, but observed data starts at t=0
+    std::vector<double> positive_time_points;
+    std::vector<size_t> positive_time_indices;  // Map from positive index to original index
+    for (size_t i = 0; i < time_points.size(); ++i) {
+        if (time_points[i] >= 0.0) {
+            positive_time_points.push_back(time_points[i]);
+            positive_time_indices.push_back(i);
+        }
+    }
+    
+    if (positive_time_points.empty()) {
+        Logger::getInstance().warning("ResultAggregator", "No non-negative time points for PPC.");
+        return PosteriorPredictiveData();
+    }
+    
+    Logger::getInstance().info("ResultAggregator", 
+        "PPC using " + std::to_string(positive_time_points.size()) + 
+        " time points (filtered from " + std::to_string(time_points.size()) + ")");
+    
     PosteriorPredictiveData ppd_data;
-    ppd_data.time_points = time_points;
+    ppd_data.time_points = positive_time_points;  // Use only positive time points
     
     // Fill observed data
     ppd_data.daily_hospitalizations.observed = observed_data.getNewHospitalizations();
@@ -158,7 +230,7 @@ PosteriorPredictiveData ResultAggregator::aggregatePosteriorPredictives(
         return ppd_data;
     }
     
-    int T = time_points.size();
+    int T = positive_time_points.size();  // Use filtered size
     int A = model_template->getNumAgeClasses();
     
     std::vector<double> ppd_probs = {0.025, 0.05, 0.5, 0.95, 0.975};
@@ -183,11 +255,22 @@ PosteriorPredictiveData ResultAggregator::aggregatePosteriorPredictives(
         std::vector<PPDQuantileAccumulatorType>(A, 
             PPDQuantileAccumulatorType(ba::extended_p_square_probabilities = ppd_probs)));
     
+    // FIX Bug 8: Use provided seed for reproducibility, or random_device if seed is 0
+    std::mt19937 gen;
+    if (random_seed != 0) {
+        gen.seed(random_seed);
+        Logger::getInstance().info("ResultAggregator", 
+            "PPC using fixed random seed: " + std::to_string(random_seed));
+    } else {
+        std::random_device rd;
+        gen.seed(rd());
+        Logger::getInstance().info("ResultAggregator", 
+            "PPC using random seed from random_device");
+    }
+    
     // Select samples
     std::vector<int> selected_indices;
     if (num_samples_for_ppc > 0 && static_cast<size_t>(num_samples_for_ppc) < param_samples.size()) {
-        std::random_device rd;
-        std::mt19937 gen(rd());
         std::uniform_int_distribution<> distrib(0, param_samples.size() - 1);
         selected_indices.reserve(num_samples_for_ppc);
         for (int i = 0; i < num_samples_for_ppc; ++i) {
@@ -201,27 +284,52 @@ PosteriorPredictiveData ResultAggregator::aggregatePosteriorPredictives(
     int processed = 0;
     for (int sample_idx : selected_indices) {
         const Eigen::VectorXd& p_vec = param_samples[sample_idx];
-        param_manager.updateModelParameters(p_vec);
+        
+        auto* sepaihrd_pm = dynamic_cast<SEPAIHRDParameterManager*>(&param_manager);
+        if (sepaihrd_pm) {
+            sepaihrd_pm->updateModelParameters(p_vec, model_template);
+        } else {
+            param_manager.updateModelParameters(p_vec);
+        }
+        
         SEPAIHRDParameters params = model_template->getModelParameters();
         
-        // Run simulation (uses cache)
+        // Run simulation (uses cache) - note: simulation uses full time_points including run-up
         SimulationResult sim_result = runner.runSimulation(params, initial_state, time_points);
         if (!sim_result.isValid()) continue;
         
-        // Calculate daily incidence flows
+        // Calculate daily incidence flows - only for positive time points
         Eigen::MatrixXd daily_hosp = Eigen::MatrixXd::Zero(T, A);
         Eigen::MatrixXd daily_icu = Eigen::MatrixXd::Zero(T, A);
         Eigen::MatrixXd daily_deaths = Eigen::MatrixXd::Zero(T, A);
         
-        // Initialize previous cumulative values from initial state
-        Eigen::VectorXd prev_CumH = initial_state.segment(9 * A, A);
-        Eigen::VectorXd prev_CumICU = initial_state.segment(10 * A, A);
-        Eigen::VectorXd prev_D = initial_state.segment(8 * A, A);
+        // Initialize previous cumulative values from the last run-up time point (or initial state if no run-up)
+        size_t first_positive_idx = positive_time_indices[0];
+        Eigen::VectorXd prev_CumH, prev_CumICU, prev_D;
+        
+        if (first_positive_idx > 0) {
+            // Use state from the time point just before t=0 (end of run-up)
+            size_t prev_idx = first_positive_idx - 1;
+            Eigen::Map<const Eigen::VectorXd> prev_CumH_map(&sim_result.solution[prev_idx][9 * A], A);
+            Eigen::Map<const Eigen::VectorXd> prev_CumICU_map(&sim_result.solution[prev_idx][10 * A], A);
+            Eigen::Map<const Eigen::VectorXd> prev_D_map(&sim_result.solution[prev_idx][8 * A], A);
+            prev_CumH = prev_CumH_map;
+            prev_CumICU = prev_CumICU_map;
+            prev_D = prev_D_map;
+        } else {
+            // No run-up, use initial state
+            prev_CumH = initial_state.segment(9 * A, A);
+            prev_CumICU = initial_state.segment(10 * A, A);
+            prev_D = initial_state.segment(8 * A, A);
+        }
 
         for (int t = 0; t < T; ++t) {
-            Eigen::Map<const Eigen::VectorXd> CumH_t(&sim_result.solution[t][9 * A], A);
-            Eigen::Map<const Eigen::VectorXd> CumICU_t(&sim_result.solution[t][10 * A], A);
-            Eigen::Map<const Eigen::VectorXd> D_t(&sim_result.solution[t][8 * A], A);
+            // Use positive_time_indices to map from positive index to original simulation index
+            size_t sim_idx = positive_time_indices[t];
+            
+            Eigen::Map<const Eigen::VectorXd> CumH_t(&sim_result.solution[sim_idx][9 * A], A);
+            Eigen::Map<const Eigen::VectorXd> CumICU_t(&sim_result.solution[sim_idx][10 * A], A);
+            Eigen::Map<const Eigen::VectorXd> D_t(&sim_result.solution[sim_idx][8 * A], A);
             
             for (int age = 0; age < A; ++age) {
                 // Calculate daily flow as difference in cumulative states
