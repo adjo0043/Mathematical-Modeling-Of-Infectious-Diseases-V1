@@ -11,11 +11,11 @@
 
 # iterations: Total number of optimization iterations.
 # Default: 2000
-iterations 100
+iterations 4000
 
 # report_interval: Frequency (in iterations) for logging progress updates.
 # Default: 100
-report_interval 10
+report_interval 100
 
 # cloud_size_multiplier: Cloud size = num_threads * multiplier.
 # Higher values generate more candidates per iteration for broader exploration.

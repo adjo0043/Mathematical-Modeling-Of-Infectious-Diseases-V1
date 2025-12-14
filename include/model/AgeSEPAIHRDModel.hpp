@@ -343,6 +343,19 @@ namespace epidemic {
          * @return true if initial deaths are considered zero, false otherwise.
          */
         bool areInitialDeathsZero() const;
+
+        // --- Lightweight accessors for objective/caching code paths ---
+        double getRunupDays() const { return runup_days; }
+        double getSeedExposed() const { return seed_exposed; }
+
+        double getE0Multiplier() const { return E0_multiplier; }
+        double getP0Multiplier() const { return P0_multiplier; }
+        double getA0Multiplier() const { return A0_multiplier; }
+        double getI0Multiplier() const { return I0_multiplier; }
+        double getH0Multiplier() const { return H0_multiplier; }
+        double getICU0Multiplier() const { return ICU0_multiplier; }
+        double getR0Multiplier() const { return R0_multiplier; }
+        double getD0Multiplier() const { return D0_multiplier; }
     
     };
     

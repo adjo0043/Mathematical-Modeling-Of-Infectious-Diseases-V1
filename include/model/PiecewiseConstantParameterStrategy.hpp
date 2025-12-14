@@ -7,6 +7,7 @@
 #include <string>
 #include <map>
 #include <memory>
+#include <limits>
 
 namespace epidemic {
 
@@ -27,6 +28,10 @@ private:
     std::vector<double> parameter_values_;
     double baseline_value_;
     double baseline_period_end_time_;
+
+    // Cache for fast interval lookup when times are (mostly) non-decreasing.
+    mutable size_t cached_period_index_ = 0;
+    mutable double cached_time_ = std::numeric_limits<double>::lowest();
 };
 
 } // namespace epidemic

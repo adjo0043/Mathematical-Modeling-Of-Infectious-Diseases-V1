@@ -309,7 +309,8 @@ int main(int argc, char* argv[]) {
 
         for (int i = 0; i < n_ages; ++i) {
             double sum_non_S = 0.0;
-            for (int j = 1; j < constants::NUM_COMPARTMENTS_SEPAIHRD; ++j) {
+            // Only sum compartments that represent people (exclude CumH/CumICU).
+            for (int j = 1; j < constants::NUM_POPULATION_COMPARTMENTS_SEPAIHRD; ++j) {
                 sum_non_S += initial_state(j * n_ages + i);
             }
             if (sum_non_S > N(i)) {

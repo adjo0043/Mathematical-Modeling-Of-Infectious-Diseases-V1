@@ -13,3 +13,5 @@ scripts/DataVisualization/__pycache__/
 scripts/data-processing/__pycache__/
 scripts/model/__pycache__/
 scripts/utils/__pycache__/
+.gitignore
+.github/

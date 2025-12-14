@@ -113,6 +113,11 @@ namespace epidemic {
 
         // RNG
         std::mt19937 gen_;
+
+        // Optional I/O controls (useful for benchmarks). Defaults preserve current behavior.
+        bool store_samples_ = true;
+        bool write_checkpoints_ = true;
+        bool write_trace_ = true;
         
         // Initial covariance from Phase 1 (if provided)
         Eigen::MatrixXd initialCovariance_;

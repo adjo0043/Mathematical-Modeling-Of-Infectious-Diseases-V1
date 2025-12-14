@@ -11,7 +11,7 @@
 
 # mcmc_iterations: Total number of MCMC iterations.
 # Default: 5000
-mcmc_iterations 10000
+mcmc_iterations 100000
 
 # thinning: Save 1 sample for every N iterations to reduce autocorrelation.
 # Default: 1 (save all)
@@ -19,19 +19,19 @@ thinning 50
 
 # report_interval: Frequency (in iterations) for logging progress and checkpointing.
 # Default: 100
-report_interval 100
+report_interval 200
 
 # --- Simulated Annealing Parameters ---
 
 # sa_initial_temp: Starting temperature for annealing.
 # Higher values allow more exploration of worse solutions initially.
 # Default: 100.0
-sa_initial_temp 100
+sa_initial_temp 1
 
 # sa_cooling_rate: Geometric cooling factor applied each iteration (T *= cooling_rate).
 # Values close to 1.0 = slow cooling, values close to 0.9 = fast cooling.
 # Default: 0.999
-sa_cooling_rate 0.9999
+sa_cooling_rate 1.0
 
 # step_all_prob: Probability of using 'Step All' (global correlated move) vs 'Step One' (local move).
 # Higher values favor global exploration, lower values favor local refinement.
