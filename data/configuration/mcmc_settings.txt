@@ -11,7 +11,7 @@
 
 # mcmc_iterations: Total number of MCMC iterations.
 # Default: 5000
-mcmc_iterations 100000
+mcmc_iterations 10000
 
 # thinning: Save 1 sample for every N iterations to reduce autocorrelation.
 # Default: 1 (save all)
@@ -43,4 +43,4 @@ step_all_prob 0.4
 # cloud_size_multiplier: Cloud size = num_threads * multiplier.
 # Higher values generate more candidates per iteration for aggressive exploration.
 # Default: 2
-cloud_size_multiplier 2
+cloud_size_multiplier 5
