@@ -58,8 +58,7 @@ namespace epidemic {
         if (it_phase1 != optimization_algorithms_.end()) {
             std::cout << "\n--- Running Phase 1: " << PHASE1_NAME << " ---" << std::endl;
             
-            // Set constraint mode to CLAMPING for optimization (Phase 1)
-            // Allows optimizer to stick to boundaries during hill climbing
+            // CLAMPING for optimization: allows optimizer to stick to boundaries
             auto* sepaihrd_pm = dynamic_cast<epidemic::SEPAIHRDParameterManager*>(parameterManager_.get());
             if (sepaihrd_pm) {
                 sepaihrd_pm->setConstraintMode(epidemic::ConstraintMode::OPTIMIZATION_CLAMP);
@@ -85,8 +84,7 @@ namespace epidemic {
         if (it_phase2 != optimization_algorithms_.end()) {
             std::cout << "\n--- Running Phase 2: " << PHASE2_NAME << " ---" << std::endl;
             
-            // Set constraint mode to REFLECTION for MCMC sampling (Phase 2)
-            // Preserves detailed balance and prevents boundary bias
+            // REFLECTION for MCMC: preserves detailed balance and prevents boundary bias
             auto* sepaihrd_pm = dynamic_cast<epidemic::SEPAIHRDParameterManager*>(parameterManager_.get());
             if (sepaihrd_pm) {
                 sepaihrd_pm->setConstraintMode(epidemic::ConstraintMode::MCMC_REFLECT);
@@ -96,9 +94,7 @@ namespace epidemic {
             IOptimizationAlgorithm* phase2_algo = it_phase2->second.get();
             phase2_algo->configure(phase2_settings);
             
-            // === COVARIANCE CONDITIONING: Phase1 → Phase2 Handover ===
             // Transfer learned covariance from Phase 1 to Phase 2 with robust conditioning
-            // to ensure MCMC proposals are well-scaled and non-singular
             if (phase1_result_.finalCovariance.size() > 0) {
                 auto* mcmc_sampler = dynamic_cast<MetropolisHastingsSampler*>(phase2_algo);
                 if (mcmc_sampler) {
@@ -107,36 +103,32 @@ namespace epidemic {
                     Eigen::MatrixXd cov = phase1_result_.finalCovariance;
                     int n_params = cov.rows();
                     
-                    // Step 1: Symmetrize (numerical stability)
+                    // Symmetrize for numerical stability
                     cov = 0.5 * (cov + cov.transpose());
                     
-                    // Step 2: Eigendecomposition + floor eigenvalues to prevent singularity
+                    // Eigendecomposition with eigenvalue flooring to prevent singularity
                     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(cov);
                     Eigen::VectorXd evals = solver.eigenvalues();
                     Eigen::MatrixXd evecs = solver.eigenvectors();
                     
-                    // Floor each eigenvalue based on a fraction of prior sigma
                     for (int i = 0; i < n_params; ++i) {
                         double prior_sigma = parameterManager_->getSigmaForParamIndex(i);
-                        double min_var = std::pow(prior_sigma * 0.1, 2); // 10% of prior sigma squared
+                        double min_var = std::pow(prior_sigma * 0.1, 2);
                         evals(i) = std::max(evals(i), min_var);
                     }
                     
-                    // Reconstruct floored covariance: Σ' = Q Λ' Q^T
+                    // Reconstruct: Σ' = Q Λ' Q^T
                     Eigen::MatrixXd floored_cov = evecs * evals.asDiagonal() * evecs.transpose();
                     
-                    // Step 3: Global inflation (multiply variance by 4 → 2x stdev)
-                    // Widens proposals to allow MCMC to explore other modes
+                    // Global inflation (4x variance = 2x stdev) for exploration
                     Eigen::MatrixXd phase2_cov = floored_cov * 4.0;
                     
-                    // Step 4: Ensure positive definiteness with small jitter before Cholesky
+                    // Ensure positive definiteness with small jitter
                     double eps = 1e-8 * phase2_cov.trace() / n_params;
                     phase2_cov += eps * Eigen::MatrixXd::Identity(n_params, n_params);
                     
-                    std::cout << "Covariance conditioning complete: symmetrized, eigenvalue floor applied, "
-                              << "inflated by 4x, PD jitter added." << std::endl;
+                    std::cout << "Covariance conditioning complete." << std::endl;
                     
-                    // Step 5: Transfer conditioned covariance to MCMC sampler
                     mcmc_sampler->setInitialCovariance(phase2_cov);
                 }
             }

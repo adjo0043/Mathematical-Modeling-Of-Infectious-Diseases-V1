@@ -36,7 +36,6 @@ SEPAIHRDObjectiveFunction::SEPAIHRDObjectiveFunction(
 {
     sepaihrd_manager_ = dynamic_cast<SEPAIHRDParameterManager*>(&parameterManager_);
 
-    // Precompute run-up offset and number of observed points.
     runup_offset_ = 0;
     for (size_t i = 0; i < time_points_.size(); ++i) {
         if (time_points_[i] >= 0.0) {
@@ -77,8 +76,7 @@ double SEPAIHRDObjectiveFunction::calculate(const Eigen::VectorXd& parameters) c
         if (cache_.getLikelihood(cache_key, cached_val)) return cached_val;
     }
 
-    // Thread-local context: avoids per-evaluation allocations and is safe when optimizers
-    // evaluate the objective in parallel (e.g., PSO with OpenMP).
+    // Thread-local context: safe for parallel objective evaluations (e.g., PSO with OpenMP)
     struct ThreadLocalContext {
         std::shared_ptr<AgeSEPAIHRDModel> model;
         std::unique_ptr<AgeSEPAIHRDSimulator> simulator;
@@ -118,14 +116,12 @@ double SEPAIHRDObjectiveFunction::calculate(const Eigen::VectorXd& parameters) c
     
     try {
         if (!sepaihrd_manager_) {
-            // Without the typed manager we would mutate shared state; treat as invalid.
             return std::numeric_limits<double>::lowest();
         }
         sepaihrd_manager_->updateModelParameters(parameters, ctx.model);
     } catch (...) { return std::numeric_limits<double>::lowest(); }
 
     int n_ages = ctx.model->getNumAgeClasses();
-    // Reuse thread-local vector buffer to avoid reallocation.
     Eigen::VectorXd& init_state = ctx.init_state;
     init_state = initial_state_;
     
@@ -159,7 +155,6 @@ double SEPAIHRDObjectiveFunction::calculate(const Eigen::VectorXd& parameters) c
     const Eigen::VectorXd& N = ctx.model->getPopulationSizes();
     for (int i = 0; i < n_ages; ++i) {
         double sum = 0;
-        // Only sum compartments that represent people (exclude CumH/CumICU).
         for (int j = 1; j < constants::NUM_POPULATION_COMPARTMENTS_SEPAIHRD; ++j) {
             sum += init_state(j * n_ages + i);
         }
@@ -182,7 +177,7 @@ double SEPAIHRDObjectiveFunction::calculate(const Eigen::VectorXd& parameters) c
         return std::numeric_limits<double>::lowest();
     }
 
-    // Thread-local incidence matrices (avoid shared mutable state in parallel evaluation).
+    // Thread-local incidence matrices for safe parallel evaluation
     if (ctx.sim_hosp.rows() != CumH_data.rows() || ctx.sim_hosp.cols() != CumH_data.cols()) {
         ctx.sim_hosp.resize(CumH_data.rows(), CumH_data.cols());
     }
@@ -219,8 +214,7 @@ double SEPAIHRDObjectiveFunction::calculate(const Eigen::VectorXd& parameters) c
         ctx.sim_deaths.setZero(D_data.rows(), D_data.cols());
     }
 
-    // Avoid spawning threads for each objective evaluation; OpenMP inside
-    // calculateSingleLogLikelihood already provides parallelism when enabled.
+    // Compute log-likelihoods for each data stream
     const auto local_sim_hosp = ctx.sim_hosp.bottomRows(num_obs_points_);
     const auto local_sim_icu = ctx.sim_icu.bottomRows(num_obs_points_);
     const auto local_sim_deaths = ctx.sim_deaths.bottomRows(num_obs_points_);
@@ -262,7 +256,7 @@ double SEPAIHRDObjectiveFunction::calculateSingleLogLikelihood(
 
     bool use_parallel = false;
 #if defined(_OPENMP)
-    // Avoid nested parallelism (e.g., PSO already parallelizes objective calls).
+    // Avoid nested parallelism when already inside parallel region
     use_parallel = (!omp_in_parallel()) && (static_cast<long long>(rows) * cols >= 256);
 #endif
 
